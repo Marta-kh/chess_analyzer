@@ -65,10 +65,14 @@ jobs:
       - name: Create & Package Xcode Project
         run: |
           toolchain create ChessAnalyzer .
-          cd ../ChessAnalyzer-ios
-          xcodebuild -project ChessAnalyzer.xcodeproj -scheme ChessAnalyzer -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE=""
+          PROJ_DIR=$(find . -maxdepth 2 -name "*.xcodeproj" -exec dirname {} \; | head -n 1)
+          echo "Found Xcode project in: $PROJ_DIR"
+          cd "$PROJ_DIR"
+          XCODEPROJ=$(ls -d *.xcodeproj | head -n 1)
+          SCHEME=$(basename "$XCODEPROJ" .xcodeproj)
+          xcodebuild -project "$XCODEPROJ" -scheme "$SCHEME" -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE=""
           mkdir -p Payload
-          cp -r build/Release-iphoneos/ChessAnalyzer.app Payload/
+          cp -r build/Release-iphoneos/*.app Payload/
           zip -rq ChessAnalyzer-unsigned.ipa Payload/
           mv ChessAnalyzer-unsigned.ipa "$GITHUB_WORKSPACE/"
 
