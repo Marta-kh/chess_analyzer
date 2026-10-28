@@ -1,0 +1,48 @@
+name: Build Android APK & iOS App
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-android:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Android Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libtinfo5 cmake libffi-dev libssl-dev
+          pip install --upgrade pip buildozer cython requests chess
+      - name: Stage Stockfish 19 Android ARM64 Engine & Check Readiness
+        run: |
+          python3 install_stockfish_19.py || true
+          python3 build_mobile.py --check
+      - name: Build Android Debug APK via Buildozer
+        run: |
+          buildozer android debug
+      - name: Upload Android APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: chess-analyzer-android-apk
+          path: bin/*.apk
+
+  build-ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile iOS In-Process Stockfish C Bridge & Run Tests
+        run: |
+          pip install chess requests
+          bash platform/ios/stockfish_ios_recipe.sh
+          python3 build_mobile.py --check
+          python3 run_tests.py
