@@ -8,7 +8,7 @@ source.exclude_dirs = tests,__pycache__,.buildozer,bin
 version = 2.0.0
 
 # Pure-Python + Kivy + PyJNIus requirements for Android
-requirements = python3,kivy==2.3.0,chess==1.11.2,requests==2.32.5,urllib3,certifi,charset-normalizer,idna,pyjnius
+requirements = python3==3.11.5,kivy==2.3.0,chess==1.11.2,requests==2.32.5,pyjnius
 
 orientation = portrait
 fullscreen = 0
