@@ -27,13 +27,23 @@ jobs:
           python3 install_stockfish_19.py || true
           python3 build_mobile.py --check
 
-      - name: Prepare Android SDK license directory
+      - name: Install Android SDK components required by Buildozer
         run: |
-          # Do NOT create .buildozer/android/platform/android-sdk here:
-          # Buildozer interprets that empty directory as an installed SDK and then
-          # fails because tools/bin/sdkmanager is missing.
-          mkdir -p "$HOME/.android"
+          # Use the SDK preinstalled on the GitHub runner rather than creating
+          # an empty ~/.buildozer SDK directory (which hides sdkmanager).
+          SDK_ROOT="${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}"
+          echo "Using Android SDK at $SDK_ROOT"
+          test -x "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          mkdir -p "$SDK_ROOT/tools/bin" "$HOME/.android"
           touch "$HOME/.android/repositories.cfg"
+          ln -sf "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" "$SDK_ROOT/tools/bin/sdkmanager"
+          yes | "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+          echo "ANDROIDSDK=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROIDNDK=$SDK_ROOT/ndk/25.2.9519653" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
 
       - name: Build Android Debug APK via Buildozer
         run: |
@@ -69,7 +79,22 @@ jobs:
 
       - name: Create & Package Xcode Project
         run: |
-          toolchain create chessanalyzer .
+          # kivy-ios copies its source tree into the app bundle with rsync.
+          # Never use the repository root directly: the generated Xcode project
+          # and build outputs live inside it and can change during that copy,
+          # causing rsync exit code 24 (files vanished during transfer).
+          SOURCE_DIR="$RUNNER_TEMP/chess-analyzer-ios-source"
+          mkdir -p "$SOURCE_DIR"
+          rsync -a "$GITHUB_WORKSPACE/" "$SOURCE_DIR/" \
+            --exclude '.git/' \
+            --exclude '.buildozer/' \
+            --exclude 'bin/' \
+            --exclude 'chessanalyzer-ios/' \
+            --exclude 'build/' \
+            --exclude 'dist/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc'
+          toolchain create chessanalyzer "$SOURCE_DIR"
           cd chessanalyzer-ios
           # Retry once: kivy-ios' generated rsync phase can intermittently return
           # code 24 when generated files disappear during the first copy.

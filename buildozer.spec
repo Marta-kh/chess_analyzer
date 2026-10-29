@@ -19,6 +19,8 @@ android.permissions = INTERNET
 android.api = 34
 android.minapi = 24
 android.ndk = 25b
+android.sdk_path = /usr/local/lib/android/sdk
+android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
 android.archs = arm64-v8a
 
 # Bundle native Stockfish 19 ARM64 PIE executable as libstockfish.so in jniLibs so Android 10+ (API 29+)
