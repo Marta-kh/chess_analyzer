@@ -286,11 +286,11 @@ class AnalysisWorkspaceScreen(KivyScreen):
 
     def _sync_center_slot(self) -> None:
         self.center_slot.clear_widgets()
+        self.center_slot.height = self.board_widget.height
+        self.scorecard_widget.height = self.board_widget.height
         if self.is_scorecard_open:
-            self.center_slot.height = self.scorecard_widget.height
             self.center_slot.add_widget(self.scorecard_widget)
         else:
-            self.center_slot.height = self.board_widget.height
             self.center_slot.add_widget(self.board_widget)
 
     def jump_to_ply_from_review(self, ply: int) -> None:

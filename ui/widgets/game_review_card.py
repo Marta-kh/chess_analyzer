@@ -1,8 +1,8 @@
 """
 Chess.com-style Game Review Scorecard Overlay Box (`GameReviewScorecardWidget`)
 with an interactive `EvaluationGraphWidget` at the top of the card and text placed cleanly below the graph.
-Uses the user's custom uploaded icons for Best (`best.png`), Excellent (`excellent.png`),
-Good (`good.png`), and Book (`book.png`), while keeping the other 6 category badges as text pills.
+Locked to the exact position and dimensions of `center_slot` / `board_widget` using proportional row heights
+so opening or closing the Scorecard never shifts or overflows any surrounding screen elements.
 """
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -12,12 +12,11 @@ from chess_analyzer.ui.kivy_compat import (
     KivyButton,
     KivyIconButton,
     KivyLabel,
-    KivyScrollLabel,
     USING_NATIVE_KIVY,
 )
 
 if USING_NATIVE_KIVY:
-    from kivy.graphics import Color, Line, Rectangle  # type: ignore
+    from kivy.graphics import Color, Line  # type: ignore
 
 ICONS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
 
@@ -32,9 +31,9 @@ CUSTOM_EVAL_ICONS: Dict[MoveQuality, str] = {
 class EvaluationGraphWidget(KivyBoxLayout):
     """
     Interactive Chess.com-style Evaluation Graph placed at the top of the Game Review Scorecard.
-    - Top sub-box (`self.graph_canvas_box`, height=32): pure graph plot area with zero text inside,
+    - Top sub-box (`self.graph_canvas_box`, height=30): pure graph plot area with zero text inside,
       so the evaluation curve never overlaps any text.
-    - Bottom sub-box (`self.text_below_box`, height=28): Opening title and key-moments caption placed
+    - Bottom sub-box (`self.text_below_box`, height=26): Opening title and key-moments caption placed
       strictly BELOW the graph plot area.
     """
 
@@ -44,7 +43,7 @@ class EvaluationGraphWidget(KivyBoxLayout):
         **kwargs,
     ) -> None:
         kwargs.setdefault("size_hint_y", None)
-        kwargs.setdefault("height", 62)
+        kwargs.setdefault("height", 60)
         super().__init__(
             orientation="vertical",
             spacing=2,
@@ -69,7 +68,7 @@ class EvaluationGraphWidget(KivyBoxLayout):
         self.text_below_box = KivyBoxLayout(
             orientation="vertical",
             size_hint_y=None,
-            height=28,
+            height=26,
             spacing=1,
         )
         self.opening_label = KivyLabel(
@@ -78,7 +77,7 @@ class EvaluationGraphWidget(KivyBoxLayout):
             font_size="10sp",
             bold=True,
             size_hint_y=None,
-            height=14,
+            height=13,
             color=(0.82, 0.88, 0.95, 1.0),
         )
         self.graph_summary_label = KivyLabel(
@@ -86,7 +85,7 @@ class EvaluationGraphWidget(KivyBoxLayout):
             id="scorecard_eval_graph_summary",
             font_size="9.5sp",
             size_hint_y=None,
-            height=13,
+            height=12,
             color=(0.66, 0.76, 0.86, 1.0),
         )
         self.text_below_box.add_widget(self.opening_label)
@@ -111,7 +110,7 @@ class EvaluationGraphWidget(KivyBoxLayout):
         eco = getattr(report, "opening_eco", "")
         op_name = getattr(report, "opening_name", "Standard Chess")
         prefix = f"{eco} " if eco else ""
-        self.opening_label.text = f"📖 {prefix}{op_name}"
+        self.opening_label.text = f"Opening: {prefix}{op_name}"
 
         events = getattr(report, "selected_events", [])
         if events:
@@ -164,7 +163,6 @@ class EvaluationGraphWidget(KivyBoxLayout):
         mid_y = gy + gh * 0.5
 
         with box.canvas.after:
-            # Equality midline (0.00)
             Color(0.45, 0.50, 0.58, 0.55)
             Line(points=[gx, mid_y, gx + gw, mid_y], width=1.0)
 
@@ -188,7 +186,11 @@ class EvaluationGraphWidget(KivyBoxLayout):
 
 
 class GameReviewScorecardWidget(KivyBoxLayout):
-    """Visual Game Review Scorecard box displayed above/over the board when Game Review finishes."""
+    """
+    Visual Game Review Scorecard box displayed in `center_slot` when Game Review finishes.
+    Uses `size_hint=(1.0, 1.0)` and proportional row heights inside `body_box` so it remains
+    locked in the exact same position and bounding box as the chessboard on every screen size.
+    """
 
     def __init__(
         self,
@@ -199,12 +201,13 @@ class GameReviewScorecardWidget(KivyBoxLayout):
         black_name: str = "Black",
         **kwargs,
     ) -> None:
-        kwargs.setdefault("size_hint_y", None)
+        kwargs.setdefault("size_hint_x", 1.0)
+        kwargs.setdefault("size_hint_y", 1.0)
         kwargs.setdefault("height", 436)
         super().__init__(
             orientation="vertical",
             spacing=1,
-            padding=5,
+            padding=4,
             bg_color=(0.11, 0.13, 0.17, 1.0),
             **kwargs,
         )
@@ -219,31 +222,31 @@ class GameReviewScorecardWidget(KivyBoxLayout):
         self.header_row = KivyBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
-            height=26,
+            height=24,
             spacing=6,
             bg_color=(0.15, 0.19, 0.25, 1.0),
         )
         self.title_label = KivyLabel(
-            text="📊 GAME REVIEW REPORT",
+            text="GAME REVIEW REPORT",
             bold=True,
-            font_size="12sp",
-            size_hint_x=0.68,
+            font_size="11.5sp",
+            size_hint_x=0.66,
         )
         self.btn_close = KivyButton(
-            text="× Show Board",
+            text="Show Board",
             id="btn_close_scorecard",
-            size_hint_x=0.32,
-            font_size="11sp",
+            size_hint_x=0.34,
+            font_size="10.5sp",
             bg_color=(0.24, 0.46, 0.34, 1.0),
             on_release=lambda _b: self._on_close(),
         )
         self.header_row.add_widget(self.title_label)
         self.header_row.add_widget(self.btn_close)
 
-        # Interactive Evaluation Graph on top of the Scorecard (with text cleanly below the graph plot)
+        # Interactive Evaluation Graph on top of the Scorecard
         self.eval_graph = EvaluationGraphWidget(on_select_ply=self._handle_graph_select_ply)
 
-        self.body_box = KivyBoxLayout(orientation="vertical", spacing=1)
+        self.body_box = KivyBoxLayout(orientation="vertical", size_hint_y=1.0, spacing=1, padding=(2, 1))
         self.add_widget(self.header_row)
         self.add_widget(self.eval_graph)
         self.add_widget(self.body_box)
@@ -282,18 +285,18 @@ class GameReviewScorecardWidget(KivyBoxLayout):
         ws = report.white_summary
         bs = report.black_summary
 
-        # 1. Players Header Row
-        players_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=16, spacing=6)
-        players_row.add_widget(KivyLabel(text="Player", size_hint_x=0.40, font_size="10.5sp", color=(0.68, 0.73, 0.80, 1.0)))
-        players_row.add_widget(KivyLabel(text=white_name[:12], size_hint_x=0.24, bold=True, font_size="10.5sp"))
+        # 1. Players Header Row (proportional size_hint_y so all 13 rows fit flush inside body_box)
+        players_row = KivyBoxLayout(orientation="horizontal", size_hint_y=0.06, spacing=4, padding=0)
+        players_row.add_widget(KivyLabel(text="Player", size_hint_x=0.40, font_size="10sp", color=(0.68, 0.73, 0.80, 1.0)))
+        players_row.add_widget(KivyLabel(text=white_name[:12], size_hint_x=0.24, bold=True, font_size="10sp"))
         players_row.add_widget(KivyLabel(text="", size_hint_x=0.12))
-        players_row.add_widget(KivyLabel(text=black_name[:12], size_hint_x=0.24, bold=True, font_size="10.5sp"))
+        players_row.add_widget(KivyLabel(text=black_name[:12], size_hint_x=0.24, bold=True, font_size="10sp"))
         self.body_box.add_widget(players_row)
 
         # 2. Accuracy Row (White pill box + Black pill box)
-        acc_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=26, spacing=6)
+        acc_row = KivyBoxLayout(orientation="horizontal", size_hint_y=0.095, spacing=4, padding=0)
         acc_row.add_widget(
-            KivyLabel(text="Accuracy", size_hint_x=0.40, bold=True, font_size="11.5sp")
+            KivyLabel(text="Accuracy", size_hint_x=0.40, bold=True, font_size="11sp")
         )
         acc_row.add_widget(
             KivyLabel(
@@ -301,7 +304,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                 id="scorecard_white_acc",
                 size_hint_x=0.24,
                 bold=True,
-                font_size="13.5sp",
+                font_size="12.5sp",
                 color=(0.08, 0.10, 0.13, 1.0),
                 bg_color=(0.96, 0.97, 0.99, 1.0),
             )
@@ -313,24 +316,23 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                 id="scorecard_black_acc",
                 size_hint_x=0.24,
                 bold=True,
-                font_size="13.5sp",
+                font_size="12.5sp",
                 color=(0.96, 0.97, 0.99, 1.0),
                 bg_color=(0.20, 0.23, 0.28, 1.0),
             )
         )
         self.body_box.add_widget(acc_row)
 
-        # 3. 10 Move-Quality Rows:
-        #    Uses uploaded PNG icons for Best, Excellent, Good, and Book, and keeps the existing badge pills for the other 6!
+        # 3. 10 Move-Quality Rows (proportional size_hint_y=0.075 each -> 0.75 total)
         for label_txt, quality_enum, badge_sym, rgba in SCORECARD_ROWS:
             w_cnt = ws.counts.get(quality_enum.value, 0)
             b_cnt = bs.counts.get(quality_enum.value, 0)
-            row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=22, spacing=4)
+            row = KivyBoxLayout(orientation="horizontal", size_hint_y=0.075, spacing=4, padding=0)
             row.add_widget(
                 KivyLabel(
                     text=label_txt,
                     size_hint_x=0.40,
-                    font_size="11sp",
+                    font_size="10.5sp",
                     color=(0.86, 0.89, 0.93, 1.0),
                 )
             )
@@ -339,7 +341,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                     text=str(w_cnt),
                     size_hint_x=0.24,
                     bold=True,
-                    font_size="12sp",
+                    font_size="11.5sp",
                     color=rgba,
                 )
             )
@@ -359,7 +361,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                     id=f"badge_{quality_enum.name.lower()}",
                     size_hint_x=0.12,
                     bold=True,
-                    font_size="10sp",
+                    font_size="9.5sp",
                     color=(0.08, 0.09, 0.11, 1.0) if rgba[0] + rgba[1] > 1.3 else (0.98, 0.99, 1.0, 1.0),
                     bg_color=rgba,
                 )
@@ -371,16 +373,16 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                     text=str(b_cnt),
                     size_hint_x=0.24,
                     bold=True,
-                    font_size="12sp",
+                    font_size="11.5sp",
                     color=rgba,
                 )
             )
             self.body_box.add_widget(row)
 
         # 4. Bottom Game Rating Row
-        rating_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=26, spacing=6)
+        rating_row = KivyBoxLayout(orientation="horizontal", size_hint_y=0.095, spacing=4, padding=0)
         rating_row.add_widget(
-            KivyLabel(text="Game Rating", size_hint_x=0.40, bold=True, font_size="11.5sp")
+            KivyLabel(text="Game Rating", size_hint_x=0.40, bold=True, font_size="11sp")
         )
         rating_row.add_widget(
             KivyLabel(
@@ -388,7 +390,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                 id="scorecard_white_rating",
                 size_hint_x=0.24,
                 bold=True,
-                font_size="13sp",
+                font_size="12sp",
                 color=(0.08, 0.10, 0.13, 1.0),
                 bg_color=(0.96, 0.97, 0.99, 1.0),
             )
@@ -400,7 +402,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                 id="scorecard_black_rating",
                 size_hint_x=0.24,
                 bold=True,
-                font_size="13sp",
+                font_size="12sp",
                 color=(0.96, 0.97, 0.99, 1.0),
                 bg_color=(0.20, 0.23, 0.28, 1.0),
             )

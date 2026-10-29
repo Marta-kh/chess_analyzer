@@ -4,6 +4,7 @@ import threading
 from typing import Callable, Dict, List, Optional
 import chess
 from chess_analyzer.domain.game_session import GameSession
+from chess_analyzer.engines.bundled_uci_core import BundledUCISession
 from chess_analyzer.engines.engine_models import CandidateVariation, EngineDefinition, EngineScore
 from chess_analyzer.engines.uci_process import UCIProcessClient
 from .evaluator import PositionEvaluator
@@ -33,7 +34,8 @@ class GameAnalysisProgress:
 class GameAnalyzer:
     """
     Executes game-wide move classification on a background thread with:
-    - Single Stockfish process reused across the entire game
+    - Fast in-process Zobrist-cached batch evaluation for the bundled engine (zero IPC/thread spawn overhead per ply)
+      and persistent subprocess reuse for custom external UCI binaries
     - Position reuse (each ply's `fen_after` evaluation is reused from the next ply's `fen_before` evaluation,
       evaluating N+1 unique positions instead of 2N)
     - Horizon-effect clamping so non-best moves evaluated 1 ply deeper do not receive artificial 0-loss scores
@@ -62,11 +64,20 @@ class GameAnalyzer:
         if t is not None and t.is_alive() and t is not threading.current_thread():
             t.join(timeout=1.5)
 
+    @staticmethod
+    def _uses_bundled_core(engine_def: EngineDefinition) -> bool:
+        if engine_def.transport_type != "subprocess":
+            return True
+        bp = engine_def.binary_path.lower()
+        if bp.endswith("bundled_uci_core.py") or bp.endswith("assets/engines/linux_x86_64/stockfish"):
+            return True
+        return False
+
     def analyze_session_sync(
         self,
         session: GameSession,
         engine_def: EngineDefinition,
-        search_depth: int = 4,
+        search_depth: int = 6,
         multipv: int = 2,
         on_progress: Optional[Callable[[GameAnalysisProgress], None]] = None,
         force_reanalyze: bool = False,
@@ -128,27 +139,60 @@ class GameAnalyzer:
             fens_after_moves=fens_after,
         )
 
-        client = UCIProcessClient(
-            engine_id=f"{engine_def.engine_id}_batch",
-            display_name=engine_def.display_name,
-            binary_path=engine_def.binary_path,
-            transport_type=engine_def.transport_type,
-        )
+        use_fast_direct = self._uses_bundled_core(engine_def)
+        direct_session: Optional[BundledUCISession] = None
+        client: Optional[UCIProcessClient] = None
+        if use_fast_direct:
+            direct_session = BundledUCISession(emit_callback=lambda _l: None, engine_name=engine_def.display_name)
+        else:
+            client = UCIProcessClient(
+                engine_id=f"{engine_def.engine_id}_batch",
+                display_name=engine_def.display_name,
+                binary_path=engine_def.binary_path,
+                transport_type=engine_def.transport_type,
+            )
+
         classifications: List[MoveClassification] = []
         position_analyses: List[PositionAnalysis] = []
 
         try:
-            client.start(timeout=5.0)
+            if client is not None:
+                client.start(timeout=5.0)
             search_seq = 0
             mpv_count = max(2, multipv)
 
-            def evaluate_fen(fen: str, mpv: int) -> List[CandidateVariation]:
+            def evaluate_fen(fen: str, mpv: int, board_obj: Optional[chess.Board] = None) -> List[CandidateVariation]:
                 cache_key = f"{fen}|{engine_def.version_build}|d{search_depth}|mpv{mpv}"
                 if cache_key in self._eval_cache:
                     return self._eval_cache[cache_key]
                 higher_key = f"{fen}|{engine_def.version_build}|d{search_depth}|mpv{mpv_count}"
                 if mpv == 1 and higher_key in self._eval_cache:
                     return self._eval_cache[higher_key]
+
+                if direct_session is not None:
+                    b_eval = board_obj.copy(stack=False) if board_obj is not None else chess.Board(fen)
+                    pov_col = "white" if b_eval.turn == chess.WHITE else "black"
+                    raw_tuples = direct_session.evaluate_position_fast(
+                        board=b_eval,
+                        multipv=mpv,
+                        target_depth=search_depth,
+                    )
+                    ordered = [
+                        CandidateVariation(
+                            multipv_index=m_idx,
+                            score=EngineScore(raw_cp_pov=r_cp, raw_mate_pov=r_mate, pov_color=pov_col),
+                            depth=rep_d,
+                            seldepth=rep_d + 2,
+                            pv_uci=p_uci,
+                            pv_san=p_san,
+                            is_complete=True,
+                        )
+                        for (m_idx, r_cp, r_mate, p_uci, p_san, rep_d) in raw_tuples
+                    ]
+                    self._eval_cache[cache_key] = ordered
+                    return ordered
+
+                assert client is not None
                 nonlocal search_seq
                 search_seq += 1
                 client.start_search(
@@ -164,8 +208,12 @@ class GameAnalyzer:
                 self._eval_cache[cache_key] = ordered
                 return ordered
 
-            def build_pos_analysis(ply_idx: int, fen_str: str, vars_list: List[CandidateVariation]) -> PositionAnalysis:
-                b = chess.Board(fen_str)
+            def build_pos_analysis(
+                ply_idx: int,
+                fen_str: str,
+                b: chess.Board,
+                vars_list: List[CandidateVariation],
+            ) -> PositionAnalysis:
                 turn_col = "white" if b.turn == chess.WHITE else "black"
                 if b.is_checkmate():
                     sc = EngineScore(raw_cp_pov=None, raw_mate_pov=0, pov_color=turn_col)
@@ -216,15 +264,20 @@ class GameAnalyzer:
 
                 board_before = chess.Board(node.fen_before)
                 legal_count = board_before.legal_moves.count()
-                vars_before = next_vars_cached if next_vars_cached is not None else evaluate_fen(node.fen_before, mpv_count)
+                vars_before = (
+                    next_vars_cached
+                    if next_vars_cached is not None
+                    else evaluate_fen(node.fen_before, mpv_count, board_before)
+                )
                 if idx == 0:
-                    position_analyses.append(build_pos_analysis(0, node.fen_before, vars_before))
+                    position_analyses.append(build_pos_analysis(0, node.fen_before, board_before, vars_before))
 
                 board_after = chess.Board(node.fen_after)
-                is_draw_after = board_after.is_game_over() and not board_after.is_checkmate()
+                is_checkmate_after = board_after.is_checkmate()
+                is_draw_after = (not is_checkmate_after) and board_after.is_game_over()
                 mover_col = node.turn_before
 
-                if board_after.is_checkmate():
+                if is_checkmate_after:
                     pov = "white" if board_after.turn == chess.WHITE else "black"
                     score_after = EngineScore(raw_cp_pov=None, raw_mate_pov=0, pov_color=pov)
                     next_vars_cached = []
@@ -234,7 +287,7 @@ class GameAnalyzer:
                     next_vars_cached = []
                 else:
                     req_mpv_after = mpv_count if idx + 1 < total else 1
-                    vars_after = evaluate_fen(node.fen_after, req_mpv_after)
+                    vars_after = evaluate_fen(node.fen_after, req_mpv_after, board_after)
                     next_vars_cached = vars_after
                     score_after = vars_after[0].score if vars_after else None
 
@@ -249,7 +302,6 @@ class GameAnalyzer:
                                 if after_cp > cand_cp:
                                     score_after = matched_cand.score
                             else:
-                                # Played move wasn't in top MultiPV lines at root: cannot be better than the lowest MultiPV line
                                 worst_mpv_cp = PositionEvaluator.score_to_mover_cp(vars_before[-1].score, mover_col)
                                 ceiling_cp = min(best_before_cp - 12, worst_mpv_cp - 5)
                                 if after_cp > ceiling_cp:
@@ -257,7 +309,7 @@ class GameAnalyzer:
                                     score_after = EngineScore(raw_cp_pov=-ceiling_cp, raw_mate_pov=None, pov_color=opp_col)
 
                 position_analyses.append(
-                    build_pos_analysis(node.ply, node.fen_after, next_vars_cached or [])
+                    build_pos_analysis(node.ply, node.fen_after, board_after, next_vars_cached or [])
                 )
 
                 mover_rating = white_rating if mover_col == "white" else black_rating
@@ -316,13 +368,14 @@ class GameAnalyzer:
                 black_rating=black_rating,
             )
         finally:
-            client.stop_process()
+            if client is not None:
+                client.stop_process()
 
     def start_background_analysis(
         self,
         session: GameSession,
         engine_def: EngineDefinition,
-        search_depth: int = 4,
+        search_depth: int = 6,
         on_progress: Optional[Callable[[GameAnalysisProgress], None]] = None,
         on_complete: Optional[Callable[[Optional[GameAnalysisReport]], None]] = None,
         force_reanalyze: bool = False,

@@ -665,6 +665,8 @@ class TestPerMoveRecursiveVariationTreeAndUIReview(unittest.TestCase):
                 container.set_active_session(sess)
                 app.navigator.navigate_to(ScreenName.WORKSPACE)
                 ws.on_pre_enter()
+                self.assertEqual(len(ws.board_widget.square_buttons), 64)
+                self.assertNotEqual(ws.board_widget.status_banner.text, "No active chess session")
 
                 rep1 = ws.run_classification_now(search_depth=2)
                 self.assertIsNotNone(rep1)
