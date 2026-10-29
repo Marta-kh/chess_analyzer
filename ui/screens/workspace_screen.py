@@ -655,3 +655,6 @@ class AnalysisWorkspaceScreen(KivyScreen):
                 self.current_move_eval_label.text = (
                     "Coach: Tap 'Game Review' below to classify every move (Best, Great, Blunder, etc.) and open the Scorecard."
                 )
+
+        self.board_widget.refresh_board()
+        self.engine_panel.refresh()
