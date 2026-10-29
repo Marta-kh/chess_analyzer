@@ -706,17 +706,11 @@ class MoveClassifier:
         is_exact_best = best_var.best_move_uci == played_uci
         ep_before = comp.expected_points_before
         ep_after = comp.expected_points_after
-        # If the played move is the engine's top move, clamp horizon noise only when score_after did not refute it
-        post_move_drop = comp.expected_points_loss
-        if is_exact_best and post_move_drop <= t.brilliant.max_ep_loss + eps and comp.cp_loss <= t.brilliant.max_cp_loss:
-            ep_loss = 0.0
-            cp_loss = 0
-        else:
-            ep_loss = comp.expected_points_loss
-            cp_loss = comp.cp_loss
+        ep_loss = 0.0 if is_exact_best else comp.expected_points_loss
+        cp_loss = 0 if is_exact_best else comp.cp_loss
 
         ordinary_q = self._classify_ordinary_v2(
-            is_exact_best and ep_loss <= eps,
+            is_exact_best,
             ep_loss,
             cp_loss,
             comp,
@@ -748,7 +742,7 @@ class MoveClassifier:
         else:
             # 1. Book move detector (strictly requires opening database match via is_book_line is True)
             is_book = False
-            if is_book_line is True and ep_loss <= t.good_max_ep_loss + eps:
+            if is_book_line is True and ep_loss <= t.inaccuracy_max_ep_loss + eps:
                 is_book = True
                 special_flags.append("opening_book")
 

@@ -353,6 +353,7 @@ class GameReviewScorecardWidget(KivyBoxLayout):
                     text=badge_sym,
                     id=f"badge_{quality_enum.name.lower()}",
                     bg_color=rgba,
+                    icon_scale=0.50,
                     size_hint_x=0.12,
                 )
             else:

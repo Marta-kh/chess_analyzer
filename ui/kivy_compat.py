@@ -467,12 +467,14 @@ try:
             is_selected: bool = False,
             bg_color: Optional[Tuple[float, float, float, float]] = None,
             on_release: Optional[Callable[..., None]] = None,
+            icon_scale: float = 0.68,
             **kwargs: Any,
         ) -> None:
             wid, kw_rel, _, clean = _clean_kwargs(kwargs)
             super().__init__(**clean)
             self.id = wid
             self.icon_path = icon_path
+            self.icon_scale = float(icon_scale)
             self.text = text or (Path(icon_path).stem if icon_path else "")
             self.is_selected = is_selected
             self._release_callbacks: List[Callable[..., None]] = []
@@ -506,8 +508,12 @@ try:
                     max(4, inst.height - 2),
                 )
                 if inst._img is not None:
-                    inst._img.pos = (inst.x + inst.width * 0.12, inst.y + inst.height * 0.12)
-                    inst._img.size = (inst.width * 0.76, inst.height * 0.76)
+                    side = max(_native_dp(8), min(inst.width, inst.height) * inst.icon_scale)
+                    inst._img.size = (side, side)
+                    inst._img.pos = (
+                        inst.x + (inst.width - side) * 0.5,
+                        inst.y + (inst.height - side) * 0.5,
+                    )
                 if inst._lbl is not None:
                     inst._lbl.pos = inst.pos
                     inst._lbl.size = inst.size
@@ -631,6 +637,18 @@ try:
             clean.setdefault("font_size", "12.5sp")
             super().__init__(text=text, hint_text=hint_text, **clean)
             self.id = wid
+
+            if not self.multiline:
+                def _upd_vcenter(inst: Any, *_args: Any) -> None:
+                    lh = float(getattr(inst, "line_height", 0) or _native_dp(15))
+                    pad_y = max(_native_dp(3), (float(inst.height) - lh) * 0.5)
+                    pad_x = _native_dp(8)
+                    curr_pad = list(inst.padding) if isinstance(inst.padding, (list, tuple)) else [0, 0, 0, 0]
+                    if len(curr_pad) < 4 or abs(float(curr_pad[1]) - pad_y) > _native_dp(1.0):
+                        inst.padding = [pad_x, pad_y, pad_x, pad_y]
+
+                self.bind(size=_upd_vcenter, line_height=_upd_vcenter)
+                _upd_vcenter(self)
 
     class KivyScreen(_NativeScreen):
         def __init__(self, name: str = "", **kwargs: Any) -> None:
@@ -763,11 +781,13 @@ except ImportError:
             text: str = "",
             is_selected: bool = False,
             on_release: Optional[Callable[..., None]] = None,
+            icon_scale: float = 0.68,
             **kwargs: Any,
         ) -> None:
             label_txt = text or (Path(icon_path).stem if icon_path else "")
             super().__init__(text=label_txt, on_release=on_release, icon_path=icon_path, **kwargs)
             self.icon_path = icon_path
+            self.icon_scale = float(icon_scale)
             self.is_selected = is_selected
 
         def set_selected(self, selected: bool) -> None:
