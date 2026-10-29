@@ -23,6 +23,20 @@ if not _IS_MOBILE:
 # OR flattened into `/data/user/0/.../files/app/main.py` inside a Buildozer Android APK or kivy-ios bundle!
 _PKG_DIR = str(Path(__file__).resolve().parent)
 _PARENT_DIR = str(Path(__file__).resolve().parent.parent)
+
+# Fix directory permissions on Android/iOS (resolves p4a private.tar 0644 traversal bug)
+try:
+    os.chmod(_PKG_DIR, os.stat(_PKG_DIR).st_mode | 0o755)
+except Exception:
+    pass
+for _root, _dirs, _files in os.walk(_PKG_DIR):
+    for _d in _dirs:
+        _dp = os.path.join(_root, _d)
+        try:
+            os.chmod(_dp, os.stat(_dp).st_mode | 0o755)
+        except Exception:
+            pass
+
 for _bad in ("", ".", _PKG_DIR, os.getcwd()):
     try:
         if Path(_bad or ".").resolve() == Path(_PKG_DIR).resolve():
