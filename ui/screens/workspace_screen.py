@@ -62,7 +62,8 @@ class AnalysisWorkspaceScreen(KivyScreen):
             text="Analyze This",
             bold=True,
             size_hint_x=0.36,
-            font_size="11sp",
+            font_size="10.5sp",
+            wrap=True,
         )
         self.title_input = KivyTextInput(
             text="",
@@ -286,8 +287,10 @@ class AnalysisWorkspaceScreen(KivyScreen):
     def _sync_center_slot(self) -> None:
         self.center_slot.clear_widgets()
         if self.is_scorecard_open:
+            self.center_slot.height = self.scorecard_widget.height
             self.center_slot.add_widget(self.scorecard_widget)
         else:
+            self.center_slot.height = self.board_widget.height
             self.center_slot.add_widget(self.board_widget)
 
     def jump_to_ply_from_review(self, ply: int) -> None:

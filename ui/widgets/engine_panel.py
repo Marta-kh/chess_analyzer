@@ -12,7 +12,7 @@ from chess_analyzer.engines import (
     EngineManager,
     MAX_VARIATIONS_PER_ENGINE,
 )
-from chess_analyzer.ui.kivy_compat import KivyBoxLayout, KivyButton, KivyLabel, KivyScrollLabel
+from chess_analyzer.ui.kivy_compat import KivyBoxLayout, KivyButton, KivyDP, KivyLabel, KivyScrollLabel
 
 
 class EngineInstancePanel(KivyBoxLayout):
@@ -96,7 +96,7 @@ class EngineInstancePanel(KivyBoxLayout):
         )
 
         if self.result.limited_variations_reason:
-            self.limitation_label.height = 18
+            self.limitation_label.height = KivyDP(18)
             self.limitation_label.text = f"Note: {self.result.limited_variations_reason}"
         else:
             self.limitation_label.height = 0

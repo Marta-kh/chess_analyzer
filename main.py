@@ -6,7 +6,12 @@ import types
 from pathlib import Path
 
 os.environ.setdefault("KIVY_NO_ARGS", "1")
-_IS_MOBILE = ("ANDROID_ARGUMENT" in os.environ) or ("ANDROID_PRIVATE" in os.environ) or (os.environ.get("KIVY_BUILD") == "ios")
+_IS_MOBILE = (
+    ("ANDROID_ARGUMENT" in os.environ)
+    or ("ANDROID_PRIVATE" in os.environ)
+    or (os.environ.get("KIVY_BUILD") == "ios")
+    or (sys.platform == "ios")
+)
 
 if not _IS_MOBILE:
     try:
@@ -23,20 +28,6 @@ if not _IS_MOBILE:
 # OR flattened into `/data/user/0/.../files/app/main.py` inside a Buildozer Android APK or kivy-ios bundle!
 _PKG_DIR = str(Path(__file__).resolve().parent)
 _PARENT_DIR = str(Path(__file__).resolve().parent.parent)
-
-# Fix directory permissions on Android/iOS (resolves p4a private.tar 0644 traversal bug)
-try:
-    os.chmod(_PKG_DIR, os.stat(_PKG_DIR).st_mode | 0o755)
-except Exception:
-    pass
-for _root, _dirs, _files in os.walk(_PKG_DIR):
-    for _d in _dirs:
-        _dp = os.path.join(_root, _d)
-        try:
-            os.chmod(_dp, os.stat(_dp).st_mode | 0o755)
-        except Exception:
-            pass
-
 for _bad in ("", ".", _PKG_DIR, os.getcwd()):
     try:
         if Path(_bad or ".").resolve() == Path(_PKG_DIR).resolve():
@@ -53,6 +44,16 @@ if "chess_analyzer" not in sys.modules:
     _pkg.__file__ = str(Path(_PKG_DIR) / "__init__.py")
     _pkg.__package__ = "chess_analyzer"
     sys.modules["chess_analyzer"] = _pkg
+
+# Guard against broken native/mypyc `chardet` wheels (e.g. chardet>=7.0 manylinux .so on Android)
+# so `import requests` never crashes on startup.
+try:
+    import chardet  # type: ignore  # noqa: F401
+except Exception:
+    _chardet_mod = types.ModuleType("chardet")
+    _chardet_mod.__version__ = "5.2.0"
+    _chardet_mod.detect = lambda data: {"encoding": "utf-8", "confidence": 0.99, "language": ""}  # type: ignore
+    sys.modules["chardet"] = _chardet_mod
 
 from chess_analyzer.app import create_app_container
 from chess_analyzer.ui import ChessAnalyzerKivyApp

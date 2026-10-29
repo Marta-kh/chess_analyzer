@@ -1,5 +1,6 @@
 """
-Kivy framework adapter with 'Analyze This' visual styling, OpenGL stencil-clipped scrollable text,
+Kivy framework adapter with 'Analyze This' visual styling, density-independent pixel (`dp`) scaling
+for iOS Retina & Android screens, safe-area mobile insets, OpenGL stencil-clipped scrollable text,
 and auto-sizing vertical BoxLayouts so text never overflows or overlaps buttons.
 """
 import os
@@ -8,6 +9,19 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 os.environ.setdefault("KIVY_NO_ARGS", "1")
+
+_IS_ANDROID = (
+    ("ANDROID_ARGUMENT" in os.environ)
+    or ("ANDROID_PRIVATE" in os.environ)
+    or (os.environ.get("KIVY_BUILD") == "android")
+)
+_IS_IOS = (
+    (os.environ.get("KIVY_BUILD") == "ios")
+    or (sys.platform == "ios")
+    or ("/Containers/Data/Application/" in str(Path.home()))
+    or ("/CoreSimulator/Devices/" in str(Path.home()))
+)
+_IS_MOBILE = _IS_ANDROID or _IS_IOS
 
 _IN_TEST_RUNNER = (
     os.environ.get("CHESS_ANALYZER_FORCE_HEADLESS") == "1"
@@ -20,14 +34,16 @@ try:
     if _IN_TEST_RUNNER:
         raise ImportError("Running inside automated test runner; using deterministic headless widget tree.")
 
-    from kivy.config import Config  # type: ignore
-    Config.set("graphics", "width", "430")
-    Config.set("graphics", "height", "860")
+    if not _IS_MOBILE:
+        from kivy.config import Config  # type: ignore
+        Config.set("graphics", "width", "430")
+        Config.set("graphics", "height", "860")
 
     from kivy.app import App as _NativeApp  # type: ignore
     from kivy.clock import Clock as KivyClock  # type: ignore
     from kivy.core.window import Window as _NativeWindow  # type: ignore
     from kivy.graphics import Color as _NativeColor, Line as _NativeLine, Rectangle as _NativeRectangle  # type: ignore
+    from kivy.metrics import dp as _native_dp  # type: ignore
     from kivy.uix.behaviors import ButtonBehavior as _NativeButtonBehavior  # type: ignore
     from kivy.uix.boxlayout import BoxLayout as _NativeBoxLayout  # type: ignore
     from kivy.uix.button import Button as _NativeButton  # type: ignore
@@ -44,12 +60,23 @@ try:
     from kivy.uix.widget import Widget as _NativeWidget  # type: ignore
 
     try:
-        _NativeWindow.size = (430, 860)
+        if not _IS_MOBILE:
+            _NativeWindow.size = (430, 860)
         _NativeWindow.clearcolor = (0.09, 0.11, 0.14, 1.0)
     except Exception:
         pass
 
     USING_NATIVE_KIVY = True
+
+    def KivyDP(val: float) -> float:
+        return float(_native_dp(val))
+
+    def _scale_dim(val: Any) -> Any:
+        if isinstance(val, (int, float)):
+            return float(_native_dp(val))
+        if isinstance(val, (tuple, list)):
+            return [float(_native_dp(x)) if isinstance(x, (int, float)) else x for x in val]
+        return val
 
     def _apply_bg_color(widget: Any, bg_color: Optional[Tuple[float, float, float, float]]) -> None:
         if bg_color is None:
@@ -68,6 +95,9 @@ try:
         wid = kwargs.pop("id", None)
         on_rel = kwargs.pop("on_release", None)
         bg_color = kwargs.pop("bg_color", None)
+        for dim_key in ("height", "width", "padding", "spacing", "scroll_wheel_distance"):
+            if dim_key in kwargs and kwargs[dim_key] is not None:
+                kwargs[dim_key] = _scale_dim(kwargs[dim_key])
         return wid, on_rel, bg_color, kwargs
 
     class KivyWidget(_NativeWidget):
@@ -81,9 +111,9 @@ try:
 
     class KivyBoxLayout(_NativeBoxLayout):
         def __init__(self, orientation: str = "vertical", auto_height: bool = False, **kwargs: Any) -> None:
+            kwargs.setdefault("padding", 4)
+            kwargs.setdefault("spacing", 4)
             wid, _, bg_color, clean = _clean_kwargs(kwargs)
-            clean.setdefault("padding", 4)
-            clean.setdefault("spacing", 4)
             if auto_height:
                 clean["size_hint_y"] = None
             super().__init__(orientation=orientation, **clean)
@@ -100,8 +130,8 @@ try:
 
     class KivyGridLayout(_NativeGridLayout):
         def __init__(self, cols: int = 1, rows: Optional[int] = None, **kwargs: Any) -> None:
+            kwargs.setdefault("spacing", 0)
             wid, _, bg_color, clean = _clean_kwargs(kwargs)
-            clean.setdefault("spacing", 0)
             super().__init__(cols=cols, rows=rows, **clean)
             self.id = wid
             _apply_bg_color(self, bg_color)
@@ -113,16 +143,15 @@ try:
         """
 
         def __init__(self, **kwargs: Any) -> None:
+            kwargs.setdefault("bar_width", 0)
+            kwargs.setdefault("scroll_type", ["content"])
+            kwargs.setdefault("scroll_wheel_distance", 36)
             wid, _, bg_color, clean = _clean_kwargs(kwargs)
-            clean.setdefault("bar_width", 0)  # Hide scrollbar visually as requested
-            clean.setdefault("scroll_type", ["content"])
-            clean.setdefault("scroll_wheel_distance", 36)
             super().__init__(**clean)
             self.id = wid
             _apply_bg_color(self, bg_color)
 
         def on_touch_down(self, touch: Any) -> bool:
-            # Support mouse wheel horizontal scrolling when do_scroll_x is True and do_scroll_y is False
             if self.collide_point(*touch.pos) and getattr(touch, "is_mouse_scrolling", False):
                 if self.do_scroll_x and not self.do_scroll_y:
                     step = 0.08
@@ -138,8 +167,8 @@ try:
         """
         Zero-feedback-loop Kivy Label:
         - `scrollable_x=True`: keeps `text_size=(None, None)` so Kivy computes `texture_size` in a single pass,
-          and updates `width` only when `abs(width - target_w) > 2.0`.
-        - `wrap=True`: binds ONLY `width` (not `size` or `height`) with a 2px tolerance guard so updating
+          and updates `width` only when `abs(width - target_w) > dp(2.0)`.
+        - `wrap=True`: binds ONLY `width` (not `size` or `height`) with a tolerance guard so updating
           `height` from `texture_size` never re-triggers `text_size`.
         """
 
@@ -162,17 +191,17 @@ try:
 
             if scrollable_x:
                 def _on_tex_w(inst: Any, ts: Any) -> None:
-                    pw = inst.parent.width if inst.parent else 200.0
-                    target_w = max(float(pw), float(ts[0]) + 20.0)
-                    if abs(float(inst.width) - target_w) > 2.0:
+                    pw = inst.parent.width if inst.parent else _native_dp(200.0)
+                    target_w = max(float(pw), float(ts[0]) + _native_dp(20.0))
+                    if abs(float(inst.width) - target_w) > _native_dp(2.0):
                         inst.width = target_w
 
                 self.bind(texture_size=_on_tex_w)
             elif wrap:
                 def _on_wrap_w(inst: Any, w: float) -> None:
-                    target_tw = max(40.0, float(w) - 12.0)
+                    target_tw = max(_native_dp(40.0), float(w) - _native_dp(12.0))
                     curr_tw = float(inst.text_size[0]) if (inst.text_size and inst.text_size[0]) else 0.0
-                    if abs(curr_tw - target_tw) > 2.0:
+                    if abs(curr_tw - target_tw) > _native_dp(2.0):
                         inst.text_size = (target_tw, None)
 
                 self.bind(width=_on_wrap_w)
@@ -214,8 +243,8 @@ try:
                     color=color,
                 )
                 def _on_v_tex(inst: Any, ts: Any) -> None:
-                    target_h = max(float(self.height), float(ts[1]) + 8.0)
-                    if abs(float(inst.height) - target_h) > 2.0:
+                    target_h = max(float(self.height), float(ts[1]) + _native_dp(8.0))
+                    if abs(float(inst.height) - target_h) > _native_dp(2.0):
                         inst.height = target_h
 
                 self._inner_label.bind(texture_size=_on_v_tex)
@@ -400,8 +429,10 @@ try:
                     inst._img.pos = (inst.x + inst.width * 0.07, inst.y + inst.height * 0.07)
                     inst._img.size = (inst.width * 0.86, inst.height * 0.86)
                 if inst._lbl is not None:
-                    inst._lbl.pos = (inst.x + 2, inst.top - 14)
-                    inst._lbl.size = (18, 12)
+                    pad_x = _native_dp(2)
+                    pad_y = _native_dp(14)
+                    inst._lbl.pos = (inst.x + pad_x, inst.top - pad_y)
+                    inst._lbl.size = (_native_dp(18), _native_dp(12))
 
             self.bind(pos=_upd, size=_upd)
             _upd(self, None)
@@ -433,9 +464,15 @@ try:
             wid, _, bg_color, clean = _clean_kwargs(kwargs)
             super().__init__(name=name, **clean)
             self.id = wid
+            if _IS_IOS:
+                screen_pad: Any = (6, 44, 6, 20)
+            elif _IS_ANDROID:
+                screen_pad = (6, 12, 6, 10)
+            else:
+                screen_pad = 6
             self._layout = KivyBoxLayout(
                 orientation="vertical",
-                padding=6,
+                padding=screen_pad,
                 spacing=4,
                 bg_color=bg_color or (0.09, 0.11, 0.14, 1.0),
             )
@@ -457,6 +494,9 @@ try:
 
 except ImportError:
     USING_NATIVE_KIVY = False
+
+    def KivyDP(val: float) -> float:
+        return float(val)
 
     class KivyClock:
         @staticmethod

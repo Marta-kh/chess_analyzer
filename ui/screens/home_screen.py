@@ -15,6 +15,7 @@ from chess_analyzer.ui.kivy_compat import (
     KivyScreen,
     KivyScrollView,
     KivyTextInput,
+    USING_NATIVE_KIVY,
 )
 
 ICONS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
@@ -93,7 +94,8 @@ class HomeScreen(KivyScreen):
             text="SAVED GAMES (Tap Edit Icon to Rename)",
             size_hint_x=0.42,
             bold=True,
-            font_size="11sp",
+            font_size="10sp",
+            wrap=True,
         )
         self.rename_input = KivyTextInput(
             text="",
@@ -113,8 +115,14 @@ class HomeScreen(KivyScreen):
         self.saved_bar.add_widget(self.rename_input)
         self.saved_bar.add_widget(self.btn_save_rename)
 
-        self.scroll = KivyScrollView()
-        self.saved_sessions_box = KivyBoxLayout(orientation="vertical", spacing=4, size_hint_y=None, height=340)
+        self.scroll = KivyScrollView(do_scroll_x=False, do_scroll_y=True)
+        self.saved_sessions_box = KivyBoxLayout(
+            orientation="vertical",
+            auto_height=True,
+            spacing=4,
+            size_hint_y=None,
+            height=340,
+        )
         self.scroll.add_widget(self.saved_sessions_box)
 
         self.add_widget(self.header_box)
@@ -151,7 +159,8 @@ class HomeScreen(KivyScreen):
             )
             return
 
-        self.saved_sessions_box.height = max(260, len(saved[:15]) * 42)
+        if not USING_NATIVE_KIVY:
+            self.saved_sessions_box.height = max(260, len(saved[:15]) * 42)
         for row in saved[:15]:
             sid = row["session_id"]
             curr_title = row["title"]

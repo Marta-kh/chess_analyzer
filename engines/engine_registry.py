@@ -80,12 +80,13 @@ class EngineRegistry:
         if sys_name == "ios" or os.environ.get("KIVY_BUILD") == "ios":
             return ("in_process://stockfish_ios_19", "in_process_ios")
 
-        # 2. Android (resolve nativeLibraryDir/libstockfish.so via PyJNIus, or in-process fallback if not bundled)
+        # 2. Android (resolve nativeLibraryDir/libstockfish.so via PyJNIus if a real >100KB binary is bundled,
+        # otherwise use the reliable in-process engine so stub/desktop binaries never crash on Android)
         if "android" in sys_name or "ANDROID_ARGUMENT" in os.environ or "ANDROID_PRIVATE" in os.environ:
             try:
                 from chess_analyzer.platform.android.android_engine_loader import resolve_android_stockfish_path
                 resolved = Path(resolve_android_stockfish_path())
-                if is_binary_compatible_with_host(resolved):
+                if is_binary_compatible_with_host(resolved) and resolved.stat().st_size > 100_000:
                     return (str(resolved), "subprocess")
             except Exception:
                 pass

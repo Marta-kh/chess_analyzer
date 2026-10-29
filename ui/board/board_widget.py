@@ -12,9 +12,11 @@ from chess_analyzer.domain import GameSession
 from chess_analyzer.ui.kivy_compat import (
     KivyBoxLayout,
     KivyButton,
+    KivyDP,
     KivyGridLayout,
     KivyLabel,
     KivySquareCell,
+    USING_NATIVE_KIVY,
 )
 
 BOARD_THEMES: Dict[str, Tuple[Tuple[float, float, float, float], Tuple[float, float, float, float]]] = {
@@ -44,7 +46,7 @@ def get_piece_png_path(piece_symbol: str) -> Optional[str]:
 class InteractiveChessBoardWidget(KivyBoxLayout):
     """
     Shared interactive 8x8 chessboard widget modeled after 'Analyze This'.
-    Uses a fixed mobile portrait height (`396dp`) so the 8x8 board is always square and prominent.
+    Uses density-independent sizing (`dp`) and dynamically keeps the 8x8 grid square on any screen width.
     """
 
     def __init__(
@@ -93,6 +95,21 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
         self.add_widget(self.status_banner)
         self.add_widget(self.grid)
         self.add_widget(self.promotion_bar)
+
+        if USING_NATIVE_KIVY:
+            def _on_board_width(inst, w: float) -> None:
+                if w <= KivyDP(100):
+                    return
+                grid_side = min(KivyDP(384), max(KivyDP(240), float(w) - KivyDP(4)))
+                if abs(float(self.grid.height) - grid_side) > KivyDP(2):
+                    self.grid.height = grid_side
+                    total_h = grid_side + KivyDP(52)
+                    self.height = total_h
+                    if self.parent is not None and getattr(self.parent, "size_hint_y", 1) is None:
+                        self.parent.height = total_h
+
+            self.bind(width=_on_board_width)
+
         self.refresh_board()
 
     def refresh_board(self) -> None:
