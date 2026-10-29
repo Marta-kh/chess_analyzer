@@ -5,7 +5,7 @@ Locked to the exact position and dimensions of `center_slot` / `board_widget` us
 so opening or closing the Scorecard never shifts or overflows any surrounding screen elements.
 """
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 from chess_analyzer.analysis import GameAnalysisReport, MoveQuality, SCORECARD_ROWS
 from chess_analyzer.ui.kivy_compat import (
     KivyBoxLayout,
@@ -26,6 +26,34 @@ CUSTOM_EVAL_ICONS: Dict[MoveQuality, str] = {
     MoveQuality.GOOD: str(ICONS_DIR / "good.png"),
     MoveQuality.BOOK: str(ICONS_DIR / "book.png"),
 }
+
+QUALITY_RGBA_MAP: Dict[MoveQuality, Tuple[float, float, float, float]] = {
+    row_q: row_rgba for _, row_q, _, row_rgba in SCORECARD_ROWS
+}
+QUALITY_RGBA_MAP[MoveQuality.FORCED] = (0.45, 0.60, 0.50, 1.0)
+QUALITY_RGBA_MAP[MoveQuality.INSUFFICIENT_DATA] = (0.35, 0.38, 0.42, 1.0)
+
+QUALITY_SYMBOL_MAP: Dict[MoveQuality, str] = {
+    row_q: row_sym for _, row_q, row_sym, _ in SCORECARD_ROWS
+}
+QUALITY_SYMBOL_MAP[MoveQuality.FORCED] = "->"
+QUALITY_SYMBOL_MAP[MoveQuality.INSUFFICIENT_DATA] = "·"
+
+
+def get_classification_badge_spec(
+    quality: MoveQuality,
+) -> Tuple[Optional[str], str, Tuple[float, float, float, float]]:
+    """
+    Returns `(icon_path_or_None, badge_symbol, bg_rgba)` for a given `MoveQuality`,
+    reusing the existing classification icon assets (`best.png`, `excellent.png`,
+    `good.png`, `book.png`) and scorecard badge colors/symbols across the top info row,
+    chessboard move marker, and Game Review Scorecard.
+    """
+    icon_file = CUSTOM_EVAL_ICONS.get(quality)
+    valid_icon = icon_file if (icon_file and Path(icon_file).exists()) else None
+    sym = QUALITY_SYMBOL_MAP.get(quality, "·")
+    rgba = QUALITY_RGBA_MAP.get(quality, (0.35, 0.38, 0.42, 1.0))
+    return (valid_icon, sym, rgba)
 
 
 class EvaluationGraphWidget(KivyBoxLayout):

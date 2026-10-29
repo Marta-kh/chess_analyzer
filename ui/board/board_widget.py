@@ -3,10 +3,11 @@
 - Renders colored light/dark squares (`#EEEED2` cream / `#769656` tournament green, plus Wood & Blue themes)
 - Renders crisp PNG Staunton chess piece sprites from `assets/pieces/`
 - Highlights selected square, last played move squares, legal destination dots, and capture rings
+- Displays circular move classification badge in the top-left corner of the piece that was just moved during Game Review
 - Displays top/bottom player bars and a pawn promotion piece selector bar
 """
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import chess
 from chess_analyzer.domain import GameSession
 from chess_analyzer.ui.kivy_compat import (
@@ -68,6 +69,7 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
         self.selected_square: Optional[str] = None
         self.highlighted_destinations: List[str] = []
         self.pending_promotion_move: Optional[tuple[str, str]] = None
+        self.active_move_classification: Optional[Any] = None
 
         self.status_banner = KivyLabel(
             text="Ready",
@@ -112,6 +114,10 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
 
         self.refresh_board()
 
+    def set_move_classification(self, cls_obj: Optional[Any]) -> None:
+        """Sets or clears the active move's `MoveClassification` for the destination square marker."""
+        self.active_move_classification = cls_obj
+
     def refresh_board(self) -> None:
         session = self._get_session()
         self.grid.clear_widgets()
@@ -131,12 +137,28 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
         square_order = bm.get_visual_square_order()
         light_rgba, dark_rgba = BOARD_THEMES.get(self.board_theme, BOARD_THEMES["analyze_this_green"])
 
-        # Identify last played move squares for highlight
+        # Identify last played move squares for highlight and top-left classification badge
         last_squares = set()
+        dest_sq_for_badge: Optional[str] = None
+        active_badge_spec: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]] = None
+        active_badge_quality: Optional[str] = None
+
         curr_node = bm.history.current_node
         if curr_node and len(curr_node.uci) >= 4:
             last_squares.add(curr_node.uci[:2])
-            last_squares.add(curr_node.uci[2:4])
+            dest_sq = curr_node.uci[2:4]
+            last_squares.add(dest_sq)
+            if (
+                not bm.is_inspecting_variation
+                and not bm.history.is_in_variant
+                and not getattr(session, "is_classification_stale", False)
+                and self.active_move_classification is not None
+                and getattr(self.active_move_classification, "ply", None) == curr_node.ply
+            ):
+                from chess_analyzer.ui.widgets.game_review_card import get_classification_badge_spec
+                dest_sq_for_badge = dest_sq
+                active_badge_spec = get_classification_badge_spec(self.active_move_classification.quality)
+                active_badge_quality = self.active_move_classification.quality.value
 
         for idx, sq_name in enumerate(square_order):
             sq_int = chess.parse_square(sq_name)
@@ -174,6 +196,9 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
                 coord_txt = sq_name[0]  # File letter a..h
             coord_col = dark_rgba if is_light else light_rgba
 
+            sq_badge_spec = active_badge_spec if sq_name == dest_sq_for_badge else None
+            sq_badge_quality = active_badge_quality if sq_name == dest_sq_for_badge else None
+
             cell = KivySquareCell(
                 square_name=sq_name,
                 bg_rgba=bg_rgba,
@@ -181,6 +206,8 @@ class InteractiveChessBoardWidget(KivyBoxLayout):
                 coord_text=coord_txt,
                 coord_color=coord_col,
                 marker_type=marker_type,
+                classification_badge=sq_badge_spec,
+                classification_quality=sq_badge_quality,
                 on_release=lambda _b, s=sq_name: self.on_square_tapped(s),
             )
             self.square_buttons[sq_name] = cell

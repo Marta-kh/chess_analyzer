@@ -2,7 +2,7 @@
 'Analyze This'-style Vertical Mobile Analysis Workspace (Section 5.5).
 Clean, zero-overlap vertical layout:
 1. Top Header Bar (`< Home`, Mode/Title, `Flip`) — rename input removed from game screen per user request
-2. Scrollable Multi-Line Move Review / Coach Box (`KivyScrollLabel`, vertical scroll, `bar_width=0`)
+2. Scrollable Multi-Line Move Review / Coach Box (`KivyClassificationBadge` + `KivyScrollLabel`, vertical scroll, `bar_width=0`)
 3. Center Slot (`InteractiveChessBoardWidget` OR `GameReviewScorecardWidget` overlay card with interactive Evaluation Graph)
 4. Clean 4-Button Action Bar (`[Mainline]`, `[Variants (0)]`, `[Game Review]`, `[Scorecard]`) without placeholder icon boxes
 5. Full-Width Horizontally Scrollable Move Strip BELOW the action buttons (`Main: 1. e4 - Best • 1... e5 - Good ...`, chunked for mobile GPUs)
@@ -20,6 +20,7 @@ from chess_analyzer.ui.board import InteractiveChessBoardWidget
 from chess_analyzer.ui.kivy_compat import (
     KivyBoxLayout,
     KivyButton,
+    KivyClassificationBadge,
     KivyClock,
     KivyIconButton,
     KivyLabel,
@@ -29,7 +30,11 @@ from chess_analyzer.ui.kivy_compat import (
     KivyTextInput,
     USING_NATIVE_KIVY,
 )
-from chess_analyzer.ui.widgets import EngineComparisonPanel, GameReviewScorecardWidget
+from chess_analyzer.ui.widgets import (
+    EngineComparisonPanel,
+    GameReviewScorecardWidget,
+    get_classification_badge_spec,
+)
 
 ICONS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
 EDIT_ICON_PATH = str(ICONS_DIR / "edit.png")
@@ -91,21 +96,23 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self.top_bar.add_widget(self.mode_indicator)
         self.top_bar.add_widget(self.btn_flip)
 
-        # 2. Scrollable Multi-Line Move Review / Coach Box ABOVE the Board
+        # 2. Top Information / Coach Box ABOVE the Board (Classification Icon Badge + Move Review Text)
         self.coach_box = KivyBoxLayout(
-            orientation="vertical",
+            orientation="horizontal",
             size_hint_y=None,
             height=50,
-            padding=4,
-            spacing=2,
+            padding=(6, 4),
+            spacing=6,
             bg_color=(0.15, 0.20, 0.27, 1.0),
         )
+        self.coach_badge_widget = KivyClassificationBadge(id="coach_classification_badge")
         self.current_move_eval_label = KivyScrollLabel(
             text="Coach: Tap 'Game Review' below to classify every move (Best, Great, Blunder, etc.) and open the Scorecard.",
             direction="vertical",
             bold=True,
             font_size="11.5sp",
         )
+        self.coach_box.add_widget(self.coach_badge_widget)
         self.coach_box.add_widget(self.current_move_eval_label)
 
         # 3. Center Slot (8x8 Interactive Chessboard OR Chess.com-style Game Review Scorecard Box)
@@ -505,6 +512,8 @@ class AnalysisWorkspaceScreen(KivyScreen):
                 return None
             self._is_review_running = True
             self.refresh_workspace()
+            self.coach_badge_widget.set_badge(None)
+            self.board_widget.set_move_classification(None)
             self.current_move_eval_label.text = "Running Game Review in background (0%)... The board remains interactive."
             engines = self.container.engine_registry.list_enabled_engines() or self.container.engine_registry.list_engines()
             primary_engine = engines[0]
@@ -559,6 +568,8 @@ class AnalysisWorkspaceScreen(KivyScreen):
         s = self.container.active_session
         if s is None:
             self.mode_indicator.text = "No Active Session"
+            self.coach_badge_widget.set_badge(None)
+            self.board_widget.set_move_classification(None)
             return
 
         bm = s.board_manager
@@ -623,20 +634,27 @@ class AnalysisWorkspaceScreen(KivyScreen):
         if not self._is_review_running:
             curr_node = h.current_node
             if s.is_classification_stale:
+                self.coach_badge_widget.set_badge(None)
+                self.board_widget.set_move_classification(None)
                 self.current_move_eval_label.text = (
                     "Move history was edited after analysis — classifications invalidated. Tap 'Game Review' to re-analyze."
                 )
                 self.classification_status_label.text = "invalidated"
-            elif curr_node and curr_node.ply in cls_by_ply:
+            elif curr_node and curr_node.ply in cls_by_ply and not bm.is_inspecting_variation:
                 c_item = cls_by_ply[curr_node.ply]
+                badge_spec = get_classification_badge_spec(c_item.quality)
+                self.coach_badge_widget.set_badge(badge_spec, quality_name=c_item.quality.value)
+                self.board_widget.set_move_classification(c_item)
                 ev_str = c_item.eval_after.format_display("white") if c_item.eval_after else ""
                 mv_num = f"{curr_node.fullmove_number}." if curr_node.turn_before == "white" else f"{curr_node.fullmove_number}..."
                 self.current_move_eval_label.text = (
-                    f"Move {mv_num} {curr_node.san} — {c_item.badge_symbol} {c_item.quality.value} (Eval: {ev_str})\n"
+                    f"Move {mv_num} {curr_node.san} — {c_item.quality.value} (Eval: {ev_str})\n"
                     f"{c_item.explanation}"
                 )
                 self.classification_status_label.text = f"★Best:{report.white_summary.counts.get(MoveQuality.BEST.value, 0) + report.black_summary.counts.get(MoveQuality.BEST.value, 0)}"
             elif report is not None and not h.is_in_variant:
+                self.coach_badge_widget.set_badge(None)
+                self.board_widget.set_move_classification(None)
                 ws = report.white_summary
                 bs = report.black_summary
                 op_txt = f" ({report.opening_eco} {report.opening_name})" if getattr(report, "opening_name", "") else ""
@@ -647,11 +665,15 @@ class AnalysisWorkspaceScreen(KivyScreen):
                 )
                 self.classification_status_label.text = f"★Best:{ws.counts.get(MoveQuality.BEST.value, 0) + bs.counts.get(MoveQuality.BEST.value, 0)}"
             elif h.is_in_variant:
+                self.coach_badge_widget.set_badge(None)
+                self.board_widget.set_move_classification(None)
                 self.current_move_eval_label.text = (
                     "Exploring variation branch — Use the Variants button to switch variations at this move, "
                     "or tap 'Mainline' to return to the original game."
                 )
             else:
+                self.coach_badge_widget.set_badge(None)
+                self.board_widget.set_move_classification(None)
                 self.current_move_eval_label.text = (
                     "Coach: Tap 'Game Review' below to classify every move (Best, Great, Blunder, etc.) and open the Scorecard."
                 )

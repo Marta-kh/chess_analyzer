@@ -1,7 +1,8 @@
 """
 Kivy framework adapter with 'Analyze This' visual styling, density-independent pixel (`dp`) scaling
 for iOS Retina & Android screens, safe-area mobile insets, chunked OpenGL stencil-clipped scrollable text
-(preventing >4096px GPU texture blackouts on long move lists), icon-enabled buttons, and Android back-gesture support.
+(preventing >4096px GPU texture blackouts on long move lists), icon-enabled buttons, circular move
+classification badges (top-left of chessboard squares and top info row), and Android back-gesture support.
 """
 import os
 import sys
@@ -85,7 +86,12 @@ try:
     from kivy.app import App as _NativeApp  # type: ignore
     from kivy.clock import Clock as KivyClock  # type: ignore
     from kivy.core.window import Window as _NativeWindow  # type: ignore
-    from kivy.graphics import Color as _NativeColor, Line as _NativeLine, Rectangle as _NativeRectangle  # type: ignore
+    from kivy.graphics import (  # type: ignore
+        Color as _NativeColor,
+        Ellipse as _NativeEllipse,
+        Line as _NativeLine,
+        Rectangle as _NativeRectangle,
+    )
     from kivy.metrics import dp as _native_dp  # type: ignore
     from kivy.uix.behaviors import ButtonBehavior as _NativeButtonBehavior  # type: ignore
     from kivy.uix.boxlayout import BoxLayout as _NativeBoxLayout  # type: ignore
@@ -537,6 +543,110 @@ try:
             for cb in list(self._release_callbacks):
                 cb(self)
 
+    class KivyClassificationBadge(_NativeWidget):
+        """
+        Circular move classification badge displayed in the top information row (`coach_box`),
+        using the exact same icon assets (`best.png`, `excellent.png`, `good.png`, `book.png`)
+        and category colors/symbols (`!!`, `!`, `?!`, `?`, `×`, `??`, `->`) as the board marker.
+        """
+
+        def __init__(self, **kwargs: Any) -> None:
+            wid, _, _, clean = _clean_kwargs(kwargs)
+            clean.setdefault("size_hint_x", None)
+            clean.setdefault("width", 0)
+            super().__init__(**clean)
+            self.id = wid
+            self.badge_spec: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]] = None
+            self.quality_name: Optional[str] = None
+            self.icon_path: Optional[str] = None
+            self.badge_symbol: str = ""
+            self.bg_rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+            self._img: Optional[_NativeImage] = None
+            self._lbl: Optional[_NativeLabel] = None
+
+            with self.canvas.before:
+                self._shadow_col = _NativeColor(0.0, 0.0, 0.0, 0.0)
+                self._shadow_ellipse = _NativeEllipse(pos=self.pos, size=(0, 0))
+                self._bg_col = _NativeColor(0.0, 0.0, 0.0, 0.0)
+                self._bg_ellipse = _NativeEllipse(pos=self.pos, size=(0, 0))
+
+            self.bind(pos=self._update_layout, size=self._update_layout)
+
+        def set_badge(
+            self,
+            badge_spec: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]],
+            quality_name: Optional[str] = None,
+        ) -> None:
+            self.badge_spec = badge_spec
+            self.quality_name = quality_name
+            if self._img is not None:
+                self.remove_widget(self._img)
+                self._img = None
+            if self._lbl is not None:
+                self.remove_widget(self._lbl)
+                self._lbl = None
+
+            if badge_spec is None:
+                self.icon_path = None
+                self.badge_symbol = ""
+                self.bg_rgba = (0.0, 0.0, 0.0, 0.0)
+                self._shadow_col.rgba = (0.0, 0.0, 0.0, 0.0)
+                self._bg_col.rgba = (0.0, 0.0, 0.0, 0.0)
+                self.width = 0
+                return
+
+            icon_path, badge_sym, badge_rgba = badge_spec
+            self.icon_path = icon_path if (icon_path and Path(icon_path).exists()) else None
+            self.badge_symbol = badge_sym
+            self.bg_rgba = badge_rgba
+            self.width = _native_dp(26)
+            self._shadow_col.rgba = (0.0, 0.0, 0.0, 0.28)
+            self._bg_col.rgba = badge_rgba
+
+            if self.icon_path:
+                self._img = _NativeImage(
+                    source=self.icon_path,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                )
+                self.add_widget(self._img)
+            else:
+                self._lbl = _NativeLabel(
+                    text=_clean_mobile_display_text(badge_sym),
+                    bold=True,
+                    font_size="9.5sp",
+                    color=(1.0, 1.0, 1.0, 1.0),
+                    halign="center",
+                    valign="middle",
+                )
+                self.add_widget(self._lbl)
+
+            self._update_layout()
+
+        def _update_layout(self, *_args: Any) -> None:
+            if self.badge_spec is None or self.width <= 1:
+                self._shadow_ellipse.size = (0, 0)
+                self._bg_ellipse.size = (0, 0)
+                return
+            badge_sz = min(_native_dp(22.0), max(_native_dp(14.0), min(self.width, self.height) * 0.84))
+            bx = self.x + (self.width - badge_sz) * 0.5
+            by = self.top - badge_sz - _native_dp(3.0)
+            self._shadow_ellipse.pos = (bx + _native_dp(0.8), by - _native_dp(1.0))
+            self._shadow_ellipse.size = (badge_sz, badge_sz)
+            self._bg_ellipse.pos = (bx, by)
+            self._bg_ellipse.size = (badge_sz, badge_sz)
+            if self._img is not None:
+                ico_sz = badge_sz * 0.58
+                self._img.size = (ico_sz, ico_sz)
+                self._img.pos = (
+                    bx + (badge_sz - ico_sz) * 0.5,
+                    by + (badge_sz - ico_sz) * 0.5,
+                )
+            if self._lbl is not None:
+                self._lbl.pos = (bx, by)
+                self._lbl.size = (badge_sz, badge_sz)
+                self._lbl.text_size = (badge_sz, badge_sz)
+
     class KivySquareCell(_NativeButtonBehavior, _NativeWidget):
         def __init__(
             self,
@@ -546,6 +656,8 @@ try:
             coord_text: str = "",
             coord_color: Tuple[float, float, float, float] = (0.1, 0.1, 0.1, 0.8),
             marker_type: str = "",
+            classification_badge: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]] = None,
+            classification_quality: Optional[str] = None,
             on_release: Optional[Callable[..., None]] = None,
             **kwargs: Any,
         ) -> None:
@@ -553,10 +665,15 @@ try:
             super().__init__(**clean)
             self.id = wid or f"sq_{square_name}"
             self.square_name = square_name
+            self.classification_badge = classification_badge
+            self.classification_quality = classification_quality
             self.text = f"{square_name}:{Path(piece_png_path).stem if piece_png_path else ''}{marker_type}"
             self._release_callbacks: List[Callable[..., None]] = []
             self._img: Optional[_NativeImage] = None
             self._lbl: Optional[_NativeLabel] = None
+            self._badge_holder: Optional[_NativeWidget] = None
+            self._badge_img: Optional[_NativeImage] = None
+            self._badge_lbl: Optional[_NativeLabel] = None
 
             with self.canvas.before:
                 self._sq_color = _NativeColor(*bg_rgba)
@@ -574,14 +691,6 @@ try:
                         width=2.2,
                     )
 
-            if piece_png_path:
-                self._img = _NativeImage(
-                    source=piece_png_path,
-                    allow_stretch=True,
-                    keep_ratio=True,
-                )
-                self.add_widget(self._img)
-
             if coord_text:
                 self._lbl = _NativeLabel(
                     text=coord_text,
@@ -590,6 +699,43 @@ try:
                     bold=True,
                 )
                 self.add_widget(self._lbl)
+
+            if piece_png_path:
+                self._img = _NativeImage(
+                    source=piece_png_path,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                )
+                self.add_widget(self._img)
+
+            # Top-left circular classification badge added AFTER `self._img` so it renders on top of the moved piece
+            if classification_badge is not None:
+                icon_path, badge_sym, badge_rgba = classification_badge
+                self._badge_holder = _NativeWidget()
+                with self._badge_holder.canvas.before:
+                    self._badge_shadow_col = _NativeColor(0.0, 0.0, 0.0, 0.28)
+                    self._badge_shadow_ellipse = _NativeEllipse(pos=self.pos, size=(0, 0))
+                    self._badge_bg_col = _NativeColor(*badge_rgba)
+                    self._badge_bg_ellipse = _NativeEllipse(pos=self.pos, size=(0, 0))
+
+                if icon_path and Path(icon_path).exists():
+                    self._badge_img = _NativeImage(
+                        source=icon_path,
+                        allow_stretch=True,
+                        keep_ratio=True,
+                    )
+                    self._badge_holder.add_widget(self._badge_img)
+                else:
+                    self._badge_lbl = _NativeLabel(
+                        text=_clean_mobile_display_text(badge_sym),
+                        bold=True,
+                        font_size="9.5sp",
+                        color=(1.0, 1.0, 1.0, 1.0),
+                        halign="center",
+                        valign="middle",
+                    )
+                    self._badge_holder.add_widget(self._badge_lbl)
+                self.add_widget(self._badge_holder)
 
             def _upd(inst: Any, _val: Any) -> None:
                 inst._sq_rect.pos = inst.pos
@@ -607,10 +753,34 @@ try:
                 if inst._img is not None:
                     inst._img.pos = (inst.x + inst.width * 0.07, inst.y + inst.height * 0.07)
                     inst._img.size = (inst.width * 0.86, inst.height * 0.86)
+                if inst._badge_holder is not None:
+                    badge_sz = max(_native_dp(12.0), min(inst.width, inst.height) * 0.40)
+                    bx = inst.x + _native_dp(1.5)
+                    by = inst.top - badge_sz - _native_dp(1.5)
+                    inst._badge_holder.pos = (bx, by)
+                    inst._badge_holder.size = (badge_sz, badge_sz)
+                    inst._badge_shadow_ellipse.pos = (bx + _native_dp(1.0), by - _native_dp(1.2))
+                    inst._badge_shadow_ellipse.size = (badge_sz, badge_sz)
+                    inst._badge_bg_ellipse.pos = (bx, by)
+                    inst._badge_bg_ellipse.size = (badge_sz, badge_sz)
+                    if inst._badge_img is not None:
+                        ico_sz = badge_sz * 0.58
+                        inst._badge_img.size = (ico_sz, ico_sz)
+                        inst._badge_img.pos = (
+                            bx + (badge_sz - ico_sz) * 0.5,
+                            by + (badge_sz - ico_sz) * 0.5,
+                        )
+                    if inst._badge_lbl is not None:
+                        inst._badge_lbl.pos = (bx, by)
+                        inst._badge_lbl.size = (badge_sz, badge_sz)
+                        inst._badge_lbl.text_size = (badge_sz, badge_sz)
                 if inst._lbl is not None:
                     pad_x = _native_dp(2)
-                    pad_y = _native_dp(14)
-                    inst._lbl.pos = (inst.x + pad_x, inst.top - pad_y)
+                    if inst._badge_holder is not None:
+                        inst._lbl.pos = (inst.x + pad_x, inst.y + _native_dp(1))
+                    else:
+                        pad_y = _native_dp(14)
+                        inst._lbl.pos = (inst.x + pad_x, inst.top - pad_y)
                     inst._lbl.size = (_native_dp(18), _native_dp(12))
 
             self.bind(pos=_upd, size=_upd)
@@ -793,6 +963,35 @@ except ImportError:
         def set_selected(self, selected: bool) -> None:
             self.is_selected = selected
 
+    class KivyClassificationBadge(KivyWidget):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.badge_spec: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]] = None
+            self.quality_name: Optional[str] = None
+            self.icon_path: Optional[str] = None
+            self.badge_symbol: str = ""
+            self.bg_rgba: Tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+            self.width: float = 0.0
+
+        def set_badge(
+            self,
+            badge_spec: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]],
+            quality_name: Optional[str] = None,
+        ) -> None:
+            self.badge_spec = badge_spec
+            self.quality_name = quality_name
+            if badge_spec is None:
+                self.icon_path = None
+                self.badge_symbol = ""
+                self.bg_rgba = (0.0, 0.0, 0.0, 0.0)
+                self.width = 0.0
+            else:
+                icon_path, badge_sym, badge_rgba = badge_spec
+                self.icon_path = icon_path if (icon_path and Path(icon_path).exists()) else None
+                self.badge_symbol = badge_sym
+                self.bg_rgba = badge_rgba
+                self.width = 26.0
+
     class KivySquareCell(KivyButton):
         def __init__(
             self,
@@ -802,6 +1001,8 @@ except ImportError:
             coord_text: str = "",
             coord_color: Tuple[float, float, float, float] = (0.1, 0.1, 0.1, 0.8),
             marker_type: str = "",
+            classification_badge: Optional[Tuple[Optional[str], str, Tuple[float, float, float, float]]] = None,
+            classification_quality: Optional[str] = None,
             on_release: Optional[Callable[..., None]] = None,
             **kwargs: Any,
         ) -> None:
@@ -815,6 +1016,8 @@ except ImportError:
             self.square_name = square_name
             self.piece_png_path = piece_png_path
             self.marker_type = marker_type
+            self.classification_badge = classification_badge
+            self.classification_quality = classification_quality
 
     class KivyTextInput(KivyWidget):
         def __init__(self, text: str = "", hint_text: str = "", **kwargs: Any) -> None:

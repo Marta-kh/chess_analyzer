@@ -691,6 +691,42 @@ class TestPerMoveRecursiveVariationTreeAndUIReview(unittest.TestCase):
                 self.assertFalse(ws.is_scorecard_open)
                 self.assertEqual(sess.board_manager.history.cursor, 3)
 
+                # 4. Verify top info row badge, text, and chessboard destination-square badge stay in sync
+                cls_by_ply = {c.ply: c for c in rep1.classifications}
+                c3 = cls_by_ply[3]
+                self.assertEqual(ws.coach_badge_widget.quality_name, c3.quality.value)
+                self.assertEqual(ws.board_widget.square_buttons["f3"].classification_quality, c3.quality.value)
+                self.assertEqual(ws.board_widget.square_buttons["f3"].classification_badge, ws.coach_badge_widget.badge_spec)
+                self.assertTrue(ws.current_move_eval_label.text.startswith(f"Move 2. Nf3 — {c3.quality.value} (Eval: "))
+                badged_squares_ply3 = [sq for sq, cell in ws.board_widget.square_buttons.items() if cell.classification_badge is not None]
+                self.assertEqual(badged_squares_ply3, ["f3"])
+
+                # Navigate backwards to ply 2 (1... e5 -> destination e5) and verify f3 badge is removed (no stale icon)
+                ws.nav_prev()
+                c2 = cls_by_ply[2]
+                self.assertEqual(sess.board_manager.history.cursor, 2)
+                self.assertIsNone(ws.board_widget.square_buttons["f3"].classification_badge)
+                self.assertEqual(ws.board_widget.square_buttons["e5"].classification_quality, c2.quality.value)
+                self.assertEqual(ws.coach_badge_widget.quality_name, c2.quality.value)
+                self.assertTrue(ws.current_move_eval_label.text.startswith(f"Move 1... e5 — {c2.quality.value} (Eval: "))
+                badged_squares_ply2 = [sq for sq, cell in ws.board_widget.square_buttons.items() if cell.classification_badge is not None]
+                self.assertEqual(badged_squares_ply2, ["e5"])
+
+                # Navigate to start position (ply 0) and verify all board badges and top-row badge clear
+                ws.nav_first()
+                self.assertIsNone(ws.coach_badge_widget.badge_spec)
+                self.assertEqual(
+                    [sq for sq, cell in ws.board_widget.square_buttons.items() if cell.classification_badge is not None],
+                    [],
+                )
+
+                # Step forward to ply 1 (1. e4 -> destination e4)
+                ws.nav_next()
+                c1 = cls_by_ply[1]
+                self.assertEqual(ws.board_widget.square_buttons["e4"].classification_quality, c1.quality.value)
+                self.assertEqual(ws.coach_badge_widget.quality_name, c1.quality.value)
+                self.assertTrue(ws.current_move_eval_label.text.startswith(f"Move 1. e4 — {c1.quality.value} (Eval: "))
+
                 # Back gesture from Workspace returns to Home screen instead of exiting the app
                 self.assertTrue(app.handle_back_action())
                 self.assertEqual(app.navigator.current_screen, ScreenName.HOME)
