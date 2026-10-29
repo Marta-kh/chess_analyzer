@@ -27,14 +27,13 @@ jobs:
           python3 install_stockfish_19.py || true
           python3 build_mobile.py --check
 
-      - name: Pre-accept Android SDK Licenses
+      - name: Prepare Android SDK license directory
         run: |
-          mkdir -p /home/runner/.android
-          touch /home/runner/.android/repositories.cfg
-          mkdir -p /home/runner/.buildozer/android/platform/android-sdk/licenses
-          cp -r /usr/local/lib/android/sdk/licenses/* /home/runner/.buildozer/android/platform/android-sdk/licenses/ 2>/dev/null || true
-          echo -e "\n893737222479664464147799c4b05b5010f5371f\n24333f8a63b6825ea9c5514f83c2829b004d1fee\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
-          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" >> /home/runner/.buildozer/android/platform/android-sdk/licenses/android-sdk-preview-license
+          # Do NOT create .buildozer/android/platform/android-sdk here:
+          # Buildozer interprets that empty directory as an installed SDK and then
+          # fails because tools/bin/sdkmanager is missing.
+          mkdir -p "$HOME/.android"
+          touch "$HOME/.android/repositories.cfg"
 
       - name: Build Android Debug APK via Buildozer
         run: |
@@ -60,6 +59,7 @@ jobs:
 
       - name: Install iOS Build Toolchain
         run: |
+          brew install autoconf automake || true
           pip install --upgrade pip "cython<3.0" kivy-ios chess requests
           bash platform/ios/stockfish_ios_recipe.sh
 
@@ -71,7 +71,10 @@ jobs:
         run: |
           toolchain create chessanalyzer .
           cd chessanalyzer-ios
-          xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos IPHONEOS_DEPLOYMENT_TARGET=13.0 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" -derivedDataPath build clean build
+          # Retry once: kivy-ios' generated rsync phase can intermittently return
+          # code 24 when generated files disappear during the first copy.
+          xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos IPHONEOS_DEPLOYMENT_TARGET=13.0 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" -derivedDataPath build clean build || \
+            xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos IPHONEOS_DEPLOYMENT_TARGET=13.0 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" -derivedDataPath build build
           mkdir -p Payload
           APP_PATH=$(find build -name "*.app" -type d | head -n 1)
           echo "Found compiled app at: $APP_PATH"
