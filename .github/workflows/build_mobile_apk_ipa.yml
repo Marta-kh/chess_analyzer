@@ -5,10 +5,6 @@ on:
   push:
     branches: [ main, master ]
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build-android:
     runs-on: ubuntu-22.04
@@ -33,7 +29,7 @@ jobs:
 
       - name: Build Android Debug APK via Buildozer
         run: |
-          yes | buildozer android debug
+          buildozer -v android debug
 
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
@@ -66,9 +62,11 @@ jobs:
         run: |
           toolchain create chessanalyzer .
           cd chessanalyzer-ios
-          xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE=""
+          xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos IPHONEOS_DEPLOYMENT_TARGET=13.0 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" -derivedDataPath build clean build
           mkdir -p Payload
-          cp -r build/Release-iphoneos/chessanalyzer.app Payload/
+          APP_PATH=$(find build -name "*.app" -type d | head -n 1)
+          echo "Found compiled app at: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
           zip -rq ChessAnalyzer-unsigned.ipa Payload/
           mv ChessAnalyzer-unsigned.ipa "$GITHUB_WORKSPACE/"
 
