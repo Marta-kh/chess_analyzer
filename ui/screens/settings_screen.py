@@ -2,7 +2,14 @@
 from chess_analyzer.app.dependencies import AppContainer
 from chess_analyzer.app.navigation import AppNavigator, ScreenName
 from chess_analyzer.engines import ResourceBudget
-from chess_analyzer.ui.kivy_compat import KivyBoxLayout, KivyButton, KivyLabel, KivyScreen
+from chess_analyzer.ui.kivy_compat import (
+    KivyBoxLayout,
+    KivyButton,
+    KivyLabel,
+    KivyScreen,
+    KivyScrollLabel,
+    KivyWidget,
+)
 
 
 class SettingsScreen(KivyScreen):
@@ -22,10 +29,13 @@ class SettingsScreen(KivyScreen):
         self.top_bar.add_widget(self.btn_back)
         self.top_bar.add_widget(self.title_lbl)
 
-        self.summary_label = KivyLabel(
+        # Horizontally scrollable summary line so long status text is never clipped off-screen
+        self.summary_label = KivyScrollLabel(
             text="",
+            direction="horizontal",
+            font_size="12sp",
             size_hint_y=None,
-            height=44,
+            height=40,
             bg_color=(0.14, 0.18, 0.24, 1.0),
         )
 
@@ -38,7 +48,8 @@ class SettingsScreen(KivyScreen):
         ):
             b = KivyButton(
                 text=th_label,
-                font_size="11sp",
+                font_size="10.5sp",
+                wrap_text=True,
                 on_release=lambda _btn, tk=th_key: self.update_setting("board_theme", tk),
             )
             self.theme_row.add_widget(b)
@@ -78,11 +89,16 @@ class SettingsScreen(KivyScreen):
             on_release=lambda _b: self.clear_analysis_cache(),
         )
 
-        self.about_label = KivyLabel(
-            text="Python Chess Analyzer v1.0.0 • Stockfish 19 (sf_19) UCI (GPLv3) • Local-First SQLite",
+        # Horizontally scrollable about line
+        self.about_label = KivyScrollLabel(
+            text="Python Chess Analyzer v2.0.0 • Stockfish 19 (sf_19) UCI (GPLv3) • Local-First SQLite",
+            direction="horizontal",
+            font_size="11.5sp",
             size_hint_y=None,
-            height=36,
+            height=34,
         )
+        # Flexible bottom spacer so settings controls anchor cleanly at the top of the screen
+        self.bottom_spacer = KivyWidget(size_hint_y=1.0)
 
         self.add_widget(self.top_bar)
         self.add_widget(self.summary_label)
@@ -91,6 +107,7 @@ class SettingsScreen(KivyScreen):
         self.add_widget(self.budget_row)
         self.add_widget(self.btn_clear_cache)
         self.add_widget(self.about_label)
+        self.add_widget(self.bottom_spacer)
         self.refresh()
 
     def on_pre_enter(self) -> None:

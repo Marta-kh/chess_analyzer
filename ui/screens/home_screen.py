@@ -1,5 +1,6 @@
 """
-'Analyze This'-style Portrait Home Screen with 3 session modes, saved games list with
+'Analyze This'-style Portrait Home Screen with 4 icon-equipped action buttons
+(`new_game.png`, `import_game.png`, `custom_game.png`, `settings.png`), saved games list with
 uploaded Edit (`edit.png`) and Delete (`delete.png`) icon buttons, and interactive Rename workflow.
 """
 from pathlib import Path
@@ -19,6 +20,10 @@ from chess_analyzer.ui.kivy_compat import (
 )
 
 ICONS_DIR = Path(__file__).resolve().parent.parent.parent / "assets" / "icons"
+NEW_GAME_ICON_PATH = str(ICONS_DIR / "new_game.png")
+IMPORT_GAME_ICON_PATH = str(ICONS_DIR / "import_game.png")
+CUSTOM_GAME_ICON_PATH = str(ICONS_DIR / "custom_game.png")
+SETTINGS_ICON_PATH = str(ICONS_DIR / "settings.png")
 EDIT_ICON_PATH = str(ICONS_DIR / "edit.png")
 DELETE_ICON_PATH = str(ICONS_DIR / "delete.png")
 
@@ -50,7 +55,8 @@ class HomeScreen(KivyScreen):
         self.header_box.add_widget(self.subtitle_label)
 
         self.btn_manual_game = KivyButton(
-            text="♟  New Game / Manual Analysis Board",
+            text="New Game / Manual Analysis Board",
+            icon_path=NEW_GAME_ICON_PATH,
             id="btn_home_manual",
             size_hint_y=None,
             height=46,
@@ -58,7 +64,8 @@ class HomeScreen(KivyScreen):
             on_release=lambda _b: self.start_manual_game(),
         )
         self.btn_import_game = KivyButton(
-            text="☁  Import Game (Chess.com / Lichess / PGN)",
+            text="Import Game (Chess.com / Lichess / PGN)",
+            icon_path=IMPORT_GAME_ICON_PATH,
             id="btn_home_import",
             size_hint_y=None,
             height=46,
@@ -66,7 +73,8 @@ class HomeScreen(KivyScreen):
             on_release=lambda _b: self.navigator.navigate_to(ScreenName.IMPORT_GAME),
         )
         self.btn_custom_position = KivyButton(
-            text="✎  Setup Position / Custom FEN Editor",
+            text="Setup Position / Custom FEN Editor",
+            icon_path=CUSTOM_GAME_ICON_PATH,
             id="btn_home_custom",
             size_hint_y=None,
             height=46,
@@ -74,10 +82,11 @@ class HomeScreen(KivyScreen):
             on_release=lambda _b: self.navigator.navigate_to(ScreenName.CUSTOM_EDITOR),
         )
         self.btn_settings = KivyButton(
-            text="⚙  Engines, Board Theme & Settings",
+            text="Engines, Board Theme & Settings",
+            icon_path=SETTINGS_ICON_PATH,
             id="btn_home_settings",
             size_hint_y=None,
-            height=38,
+            height=40,
             bg_color=(0.22, 0.26, 0.32, 1.0),
             on_release=lambda _b: self.navigator.navigate_to(ScreenName.SETTINGS),
         )
@@ -103,7 +112,7 @@ class HomeScreen(KivyScreen):
             size_hint_x=0.40,
         )
         self.btn_save_rename = KivyButton(
-            text="✓ Save",
+            text="Save",
             id="btn_confirm_home_rename",
             size_hint_x=0.18,
             font_size="11sp",
@@ -168,13 +177,14 @@ class HomeScreen(KivyScreen):
             item_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=38, spacing=4)
 
             open_btn = KivyButton(
-                text=f"{'▶ ' if is_editing_this else ''}{curr_title} [{row['mode'].upper()}]",
+                text=f"{'> ' if is_editing_this else ''}{curr_title} [{row['mode'].upper()}]",
                 id=f"open_session_{sid}",
                 size_hint_x=0.72,
+                wrap_text=True,
+                font_size="10.5sp",
                 bg_color=(0.22, 0.34, 0.26, 1.0) if is_editing_this else (0.16, 0.21, 0.28, 1.0),
                 on_release=lambda _b, s=sid: self.open_saved_session(s),
             )
-            # Uploaded Edit Icon button (contrasting light blue-silver background so black icon is crisp)
             rename_btn = KivyIconButton(
                 icon_path=EDIT_ICON_PATH,
                 text="Edit",
@@ -184,7 +194,6 @@ class HomeScreen(KivyScreen):
                 size_hint_x=0.14,
                 on_release=lambda _b, s=sid, t=curr_title: self.on_edit_button_tapped(s, t),
             )
-            # Uploaded Delete Icon button (contrasting soft coral-red background so black trash icon is crisp)
             del_btn = KivyIconButton(
                 icon_path=DELETE_ICON_PATH,
                 text="Delete",
@@ -199,20 +208,12 @@ class HomeScreen(KivyScreen):
             self.saved_sessions_box.add_widget(item_row)
 
     def on_edit_button_tapped(self, session_id: str, current_title: str) -> str:
-        """
-        Handle tapping the Edit icon button on a history item:
-        1. If the user is NOT yet editing this item and `rename_input` is empty (or has a different item's old name),
-           select this item for editing, pre-fill `rename_input.text = current_title`, enable the '✓ Save' button,
-           and focus the text input so the user can edit the name and tap '✓ Save' (or tap Edit again)!
-        2. If the user already typed a new name into `rename_input` (different from `current_title`), save it immediately!
-        """
         typed = self.rename_input.text.strip()
         if self._editing_session_id == session_id and typed and typed != current_title:
             return self.rename_saved_session(session_id, typed)
         if self._editing_session_id is None and typed and typed != current_title:
             return self.rename_saved_session(session_id, typed)
 
-        # Enter interactive rename mode for `session_id`
         self._editing_session_id = session_id
         self.rename_input.text = current_title
         try:
@@ -220,7 +221,7 @@ class HomeScreen(KivyScreen):
         except Exception:
             pass
         self.btn_save_rename.disabled = False
-        self.saved_header.text = f"Editing: {current_title[:16]} -> Tap ✓ Save"
+        self.saved_header.text = f"Editing: {current_title[:16]} -> Tap Save"
         self.refresh_saved_list()
         return current_title
 

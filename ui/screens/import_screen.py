@@ -1,7 +1,7 @@
 """
 Game Import Screen for Chess.com, Lichess, and Direct PGN Paste (Section 5.2).
-Fixes platform switching, fetches newest player archives automatically on Chess.com,
-and displays results in a scrollable vertical list.
+Uses `auto_height=True` on `results_box` so long lists of fetched games never float off-screen
+behind top UI controls or snap back out of view on high-DPI iOS/Android screens.
 """
 from datetime import datetime, timezone
 from typing import List
@@ -16,6 +16,7 @@ from chess_analyzer.ui.kivy_compat import (
     KivyScreen,
     KivyScrollView,
     KivyTextInput,
+    USING_NATIVE_KIVY,
 )
 
 
@@ -52,7 +53,7 @@ class GameImportScreen(KivyScreen):
         # Platform Selector Row (Chess.com vs Lichess)
         self.platform_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=6)
         self.btn_plat_chesscom = KivyButton(
-            text="✓ Chess.com",
+            text="Chess.com [Selected]",
             id="btn_plat_chesscom",
             bg_color=(0.24, 0.52, 0.34, 1.0),
             on_release=lambda _b: self.set_platform("chesscom"),
@@ -85,11 +86,12 @@ class GameImportScreen(KivyScreen):
 
         # Quick Preset Usernames Row
         self.preset_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=30, spacing=4)
-        self.preset_row.add_widget(KivyLabel(text="Try:", size_hint_x=0.16))
+        self.preset_row.add_widget(KivyLabel(text="Try:", size_hint_x=0.14, font_size="10.5sp"))
         for p_plat, p_user in (("chesscom", "hikaru"), ("chesscom", "MagnusCarlsen"), ("lichess", "DrNykterstein")):
             b_pre = KivyButton(
                 text=f"{p_user} ({p_plat})",
-                font_size="11sp",
+                font_size="9.5sp",
+                wrap_text=True,
                 bg_color=(0.18, 0.22, 0.28, 1.0),
                 on_release=lambda _b, pl=p_plat, u=p_user: self._use_preset(pl, u),
             )
@@ -100,6 +102,8 @@ class GameImportScreen(KivyScreen):
             text="Select Chess.com or Lichess, enter a username, and tap 'Fetch Games'.",
             size_hint_y=None,
             height=28,
+            font_size="11sp",
+            wrap=True,
         )
         self.btn_retry = KivyButton(
             text="Retry Fetch",
@@ -110,12 +114,18 @@ class GameImportScreen(KivyScreen):
             on_release=lambda _b: self.fetch_games(),
         )
 
-        # Scrollable Game Results List
-        self.scroll = KivyScrollView()
-        self.results_box = KivyBoxLayout(orientation="vertical", spacing=4, size_hint_y=None, height=420)
+        # Scrollable Game Results List (auto_height=True so height always matches dp-scaled child buttons!)
+        self.scroll = KivyScrollView(do_scroll_x=False, do_scroll_y=True)
+        self.results_box = KivyBoxLayout(
+            orientation="vertical",
+            auto_height=True,
+            spacing=4,
+            size_hint_y=None,
+            height=360,
+        )
         self.scroll.add_widget(self.results_box)
 
-        # Direct PGN Paste Row (like Analyze This 'Paste PGN')
+        # Direct PGN Paste Row
         self.pgn_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=4)
         self.pgn_input = KivyTextInput(
             text="",
@@ -160,11 +170,11 @@ class GameImportScreen(KivyScreen):
         self.selected_platform = platform_name
         self.page = 1
         if platform_name == "chesscom":
-            self.btn_plat_chesscom.text = "✓ Chess.com"
+            self.btn_plat_chesscom.text = "Chess.com [Selected]"
             self.btn_plat_lichess.text = "Lichess.org"
         else:
             self.btn_plat_chesscom.text = "Chess.com"
-            self.btn_plat_lichess.text = "✓ Lichess.org"
+            self.btn_plat_lichess.text = "Lichess.org [Selected]"
 
     def import_raw_pgn(self) -> GameSession:
         raw = self.pgn_input.text.strip()
@@ -208,7 +218,8 @@ class GameImportScreen(KivyScreen):
             else:
                 self.state = "loaded"
                 self.status_label.text = f"Loaded {len(self.games)} game(s) from {self.selected_platform}. Tap a game to analyze:"
-                self.results_box.height = max(360, len(self.games) * 46)
+                if not USING_NATIVE_KIVY:
+                    self.results_box.height = max(360, len(self.games) * 46)
                 for idx, g in enumerate(self.games):
                     w_elo = f" ({g.white_rating})" if g.white_rating else ""
                     b_elo = f" ({g.black_rating})" if g.black_rating else ""
@@ -216,11 +227,14 @@ class GameImportScreen(KivyScreen):
                         text=f"{g.played_at_iso} | {g.white_username}{w_elo} vs {g.black_username}{b_elo} [{g.result}] ({g.time_class})",
                         id=f"import_game_{idx}",
                         size_hint_y=None,
-                        height=42,
+                        height=46,
+                        font_size="10.5sp",
+                        wrap_text=True,
                         bg_color=(0.16, 0.22, 0.29, 1.0),
                         on_release=lambda _b, summary=g: self.select_game(summary),
                     )
                     self.results_box.add_widget(btn)
+                self.scroll.scroll_y = 1.0
         except (ValueError, IntegrationError) as exc:
             self.state = "error"
             self.error_message = str(exc)

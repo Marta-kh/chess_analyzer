@@ -4,7 +4,8 @@ title = Chess Analyzer
 package.name = chessanalyzer
 package.domain = org.chessanalyzer.mobile
 source.dir = ../..
-source.include_exts = py,png,jpg,kv,atlas,sql,so,json,md
+icon.filename = %(source.dir)s/assets/icons/app_icon.png
+source.include_exts = py,png,jpg,svg,kv,atlas,sql,so,json,md
 source.exclude_dirs = tests,__pycache__,.buildozer,bin,chessanalyzer-ios,build,dist
 version = 2.0.0
 
@@ -21,7 +22,8 @@ android.minapi = 24
 android.ndk = 25b
 android.sdk_path = /usr/local/lib/android/sdk
 android.ndk_path = /usr/local/lib/android/sdk/ndk/25.2.9519653
-android.archs = arm64-v8a, x86_64
+android.archs = arm64-v8a
+android.add_libs_arm64_v8a = assets/engines/android_arm64_v8a/libstockfish.so
 
 android.allow_backup = True
 

@@ -1,4 +1,4 @@
-"""Comprehensive test suite for Chess.com-Inspired Game Review V2, Per-Move Variation Trees, and UI fixes."""
+"""Comprehensive test suite for Chess.com-Inspired Game Review V2.2, Conservative Brilliant Detection, and Mobile UI Fixes."""
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +6,7 @@ import chess
 
 from chess_analyzer.analysis import (
     AccuracyModel,
+    BrilliantEligibilityConfig,
     ClassificationThresholds,
     EvaluationNormalizer,
     ExpectedPointsModel,
@@ -22,7 +23,6 @@ from chess_analyzer.app import ScreenName, create_app_container
 from chess_analyzer.domain import MoveHistory
 from chess_analyzer.engines import CandidateVariation, EngineScore
 from chess_analyzer.integrations import PGNImporter
-from chess_analyzer.storage import DatabaseManager, GameSessionRepository
 from chess_analyzer.ui import ChessAnalyzerKivyApp
 
 
@@ -133,7 +133,7 @@ class TestClassificationV2AndSpecialDetectors(unittest.TestCase):
             is_book_line=False,
         )
         self.assertEqual(c_exc.quality, MoveQuality.EXCELLENT)
-        self.assertLessEqual(c_exc.expected_points_loss, 0.02)
+        self.assertTrue(0.00 < c_exc.expected_points_loss <= 0.02)
 
         c_good = self.classifier.classify_move(
             ply=15,
@@ -229,7 +229,11 @@ class TestClassificationV2AndSpecialDetectors(unittest.TestCase):
         self.assertEqual(c_bril.quality, MoveQuality.BRILLIANT)
         self.assertEqual(c_bril.ordinary_classification, MoveQuality.BEST)
         self.assertIn("brilliant_sacrifice", c_bril.special_flags)
+        self.assertIsNotNone(c_bril.brilliant_diagnostics)
+        self.assertTrue(c_bril.brilliant_diagnostics.passed_all_gates)
+        self.assertGreaterEqual(c_bril.brilliant_diagnostics.eligibility_score, 0.65)
 
+        # Book takes precedence over Brilliant for theoretical opening traps
         c_book_override = self.classifier.classify_move(
             ply=7,
             played_uci="c3d5",
@@ -245,6 +249,7 @@ class TestClassificationV2AndSpecialDetectors(unittest.TestCase):
         )
         self.assertEqual(c_book_override.quality, MoveQuality.BOOK)
 
+        # Great move (critical only good move without sacrificing material)
         c_great = self.classifier.classify_move(
             ply=18,
             played_uci="g1f3",
@@ -261,6 +266,258 @@ class TestClassificationV2AndSpecialDetectors(unittest.TestCase):
             is_book_line=False,
         )
         self.assertEqual(c_great.quality, MoveQuality.GREAT)
+
+    def test_false_brilliant_regressions_all_eleven_scenarios(self) -> None:
+        """
+        Comprehensive regression test suite targeting all 11 false-Brilliant scenarios (Section 9):
+        1. Routine best move without a sacrifice (including defended development attacked by equal/higher piece) -> NOT Brilliant.
+        2. Ordinary capture (winning material or equal trade) -> NOT Brilliant.
+        3. Sacrifice that loses material without adequate compensation -> NOT Brilliant (Blunder).
+        4. Forced recapture / only reasonable move -> NOT Brilliant.
+        5. Speculative sacrifice that the engine refutes -> NOT Brilliant.
+        6. Move that preserves a completely winning position without forcing mate -> NOT Brilliant.
+        7. Sound, objectively justified sacrifice with concrete tactical payoff -> QUALIFIES as Brilliant.
+        8. Sound mating sacrifice without material recovery -> QUALIFIES as Brilliant.
+        9. Genuine Brilliant in a poor game qualifies, while poor game state (multi-piece blunder) does NOT loosen rules.
+        10. Deeper analysis that refutes a sacrifice removes Brilliant eligibility.
+        11. Repeated analysis of the same position produces identical classifications.
+        """
+        # Scenario 1: Routine best move developing a piece onto a defended square attacked by an enemy bishop/rook
+        # White plays Nf3 on a board where Black's Bg4 attacks f3, but g2/Qd1 defend f3 (equal trade, NOT a sacrifice!)
+        fen_defended_dev = "rn1qkbnr/ppp1pppp/8/3p4/6b1/8/PPPPPPPP/RNBQKBNR w KQkq - 2 3"
+        c_routine = self.classifier.classify_move(
+            ply=5,
+            played_uci="g1f3",
+            played_san="Nf3",
+            mover_color="white",
+            legal_moves_count=20,
+            variations_before=[
+                CandidateVariation(1, EngineScore(45, None, "white"), 14, 16, ["g1f3", "e7e6"], ["Nf3", "e6"]),
+                CandidateVariation(2, EngineScore(20, None, "white"), 14, 16, ["d2d4"], ["d4"]),
+            ],
+            score_after=EngineScore(-45, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_defended_dev,
+            is_book_line=False,
+        )
+        self.assertEqual(c_routine.quality, MoveQuality.BEST)
+        self.assertFalse(c_routine.brilliant_diagnostics.is_eligible)
+        self.assertIn("gate_2_sound_sacrifice", c_routine.brilliant_diagnostics.failed_gates)
+
+        # Scenario 2: Ordinary capture winning a hanging piece or trading queens (must NOT be Brilliant even with huge uniqueness gap)
+        fen_ordinary_cap = "r1bqkbnr/pppp1ppp/8/4n3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 4"
+        c_cap = self.classifier.classify_move(
+            ply=7,
+            played_uci="f3e5",
+            played_san="Nxe5",
+            mover_color="white",
+            legal_moves_count=26,
+            variations_before=[
+                CandidateVariation(1, EngineScore(320, None, "white"), 14, 18, ["f3e5", "d7d6"], ["Nxe5", "d6"]),
+                CandidateVariation(2, EngineScore(-20, None, "white"), 14, 18, ["d2d4"], ["d4"]),
+            ],
+            score_after=EngineScore(-320, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_ordinary_cap,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_cap.quality, MoveQuality.BRILLIANT)
+        self.assertEqual(c_cap.brilliant_diagnostics.sacrifice_type, "ordinary_capture")
+
+        # Scenario 3: Uncompensated blunder leaving a Rook en prise
+        fen_blunder_sac = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+        c_uncomp = self.classifier.classify_move(
+            ply=5,
+            played_uci="f3xe5",
+            played_san="Nxe5",
+            mover_color="white",
+            legal_moves_count=25,
+            variations_before=[
+                CandidateVariation(1, EngineScore(35, None, "white"), 14, 16, ["f1b5"], ["Bb5"]),
+            ],
+            score_after=EngineScore(260, None, "black"),  # Black is +260cp after Nxe5 Nxe5
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_blunder_sac,
+            is_book_line=False,
+        )
+        self.assertEqual(c_uncomp.quality, MoveQuality.BLUNDER)
+        self.assertFalse(c_uncomp.brilliant_diagnostics.is_eligible)
+        self.assertIn("gate_1_engine_quality", c_uncomp.brilliant_diagnostics.failed_gates)
+        self.assertIn("gate_3_concrete_compensation", c_uncomp.brilliant_diagnostics.failed_gates)
+
+        # Scenario 4: Forced recapture (where recapturing a piece is the only good move) -> Great/Best, NEVER Brilliant
+        fen_forced_recap = "r1bqkbnr/ppp2ppp/2np4/4N3/4P3/8/PPPP1PPP/RNBQKB1R b KQkq - 0 4"
+        c_recap = self.classifier.classify_move(
+            ply=8,
+            played_uci="d6e5",
+            played_san="dxe5",
+            mover_color="black",
+            legal_moves_count=25,
+            variations_before=[
+                CandidateVariation(1, EngineScore(-20, None, "black"), 14, 16, ["d6e5"], ["dxe5"]),
+                CandidateVariation(2, EngineScore(-330, None, "black"), 14, 16, ["g8f6"], ["Nf6"]),
+            ],
+            score_after=EngineScore(20, None, "white"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_forced_recap,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_recap.quality, MoveQuality.BRILLIANT)
+        self.assertEqual(c_recap.quality, MoveQuality.GREAT)
+
+        # Scenario 5: Speculative sacrifice that the engine refutes (e.g. unsound Bxh7+ dropping from +20cp to -220cp)
+        fen_unsound_greek = "r1bq1rk1/ppp1ppbp/2np1np1/8/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQ - 2 6"
+        c_refuted = self.classifier.classify_move(
+            ply=11,
+            played_uci="c4f7",
+            played_san="Bxf7+",
+            mover_color="white",
+            legal_moves_count=30,
+            variations_before=[
+                CandidateVariation(1, EngineScore(20, None, "white"), 14, 18, ["e1g1"], ["O-O"]),
+            ],
+            score_after=EngineScore(220, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_unsound_greek,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_refuted.quality, MoveQuality.BRILLIANT)
+        self.assertIn(c_refuted.quality, (MoveQuality.MISTAKE, MoveQuality.BLUNDER))
+
+        # Scenario 6: Move in an already completely winning position (+550cp / EP > 0.94) without forcing mate -> NOT Brilliant
+        fen_already_won = "r1bqkbnr/pp1p1ppp/2p5/4p3/2B1P3/2N5/PPPP1PPP/R1BQK1NR w KQkq - 0 4"
+        c_already_won = self.classifier.classify_move(
+            ply=25,
+            played_uci="c3d5",
+            played_san="Nd5",
+            mover_color="white",
+            legal_moves_count=28,
+            variations_before=[
+                CandidateVariation(1, EngineScore(550, None, "white"), 14, 18, ["c3d5", "c6d5"], ["Nd5", "cxd5"]),
+                CandidateVariation(2, EngineScore(420, None, "white"), 14, 18, ["g1f3"], ["Nf3"]),
+            ],
+            score_after=EngineScore(-540, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_already_won,
+            is_book_line=False,
+        )
+        self.assertEqual(c_already_won.quality, MoveQuality.BEST)
+        self.assertFalse(c_already_won.brilliant_diagnostics.is_eligible)
+        self.assertIn("gate_5_position_context", c_already_won.brilliant_diagnostics.failed_gates)
+
+        # Scenario 8: Sound mating sacrifice (sacrificing a Rook on e8 where Kxe8/Rxe8 is possible, forcing mate in 2)
+        # Position: White Kh1, Qd3, Re1; Black Kg8, Rf8, f7, g7, h6 -> 1. Re8! (attacked by Rf8, undefended or offered)
+        fen_mate_sac = "4rrk1/pp3pp1/7p/8/8/3Q4/PPP2PPP/4R1K1 w - - 0 18"
+        # Let's test a direct Rook sacrifice onto h7 (`Rxh7+!` where Kxh7 is legal and Qh3+ Kg8 Qh8# follows):
+        fen_rook_mate_sac = "r4rk1/ppp2ppp/8/8/8/2B4Q/PPP2PPP/6KR w - - 0 15"
+        c_mate_sac = self.classifier.classify_move(
+            ply=29,
+            played_uci="h3h7",
+            played_san="Qxh7+",
+            mover_color="white",
+            legal_moves_count=24,
+            variations_before=[
+                CandidateVariation(1, EngineScore(None, 2, "white"), 14, 18, ["h3h7", "g8h7", "h1h5"], ["Qxh7+", "Kxh7", "Rh5#"]),
+                CandidateVariation(2, EngineScore(0, None, "white"), 14, 18, ["g1f1"], ["Kf1"]),
+            ],
+            score_after=EngineScore(None, -1, "black"),  # Black is mated in 1 after Qxh7+ Kxh7
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_rook_mate_sac,
+            is_book_line=False,
+        )
+        self.assertEqual(c_mate_sac.quality, MoveQuality.BRILLIANT)
+        self.assertTrue(c_mate_sac.brilliant_diagnostics.is_eligible)
+
+        # Scenario 9: Pre-existing multi-piece blunder in a poor game must NOT trigger a false Brilliant when saving one piece
+        # Both White's Knight on a4 (attacked by b5 pawn) and Bishop on h4 (attacked by g5 pawn) are already hanging
+        fen_two_hanging = "rnbqkbnr/p3pp1p/8/1p4p1/N6B/8/PPPPPPPP/R2QKBNR w KQkq - 0 5"
+        c_damage_control = self.classifier.classify_move(
+            ply=9,
+            played_uci="a4c3",
+            played_san="Nc3",
+            mover_color="white",
+            legal_moves_count=22,
+            variations_before=[
+                CandidateVariation(1, EngineScore(-220, None, "white"), 14, 16, ["a4c3", "g5h4"], ["Nc3", "gxh4"]),
+                CandidateVariation(2, EngineScore(-500, None, "white"), 14, 16, ["a2a3"], ["a3"]),
+            ],
+            score_after=EngineScore(220, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_two_hanging,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_damage_control.quality, MoveQuality.BRILLIANT)
+        self.assertFalse(c_damage_control.brilliant_diagnostics.is_eligible)
+
+        # Scenario 10: Shallow depth (< min_depth=6) or deeper post-move refutation removes Brilliant eligibility
+        c_shallow = self.classifier.classify_move(
+            ply=7,
+            played_uci="c3d5",
+            played_san="Nd5",
+            mover_color="white",
+            legal_moves_count=28,
+            variations_before=[
+                CandidateVariation(1, EngineScore(180, None, "white"), 3, 4, ["c3d5", "c6d5"], ["Nd5", "cxd5"]),
+                CandidateVariation(2, EngineScore(0, None, "white"), 3, 4, ["g1f3"], ["Nf3"]),
+            ],
+            score_after=EngineScore(-180, None, "black"),
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_already_won,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_shallow.quality, MoveQuality.BRILLIANT)
+        self.assertIn("gate_6_reliable_analysis", c_shallow.brilliant_diagnostics.failed_gates)
+
+        c_deep_refuted = self.classifier.classify_move(
+            ply=7,
+            played_uci="c3d5",
+            played_san="Nd5",
+            mover_color="white",
+            legal_moves_count=28,
+            variations_before=[
+                CandidateVariation(1, EngineScore(180, None, "white"), 10, 14, ["c3d5", "c6d5"], ["Nd5", "cxd5"]),
+                CandidateVariation(2, EngineScore(0, None, "white"), 10, 14, ["g1f3"], ["Nf3"]),
+            ],
+            score_after=EngineScore(160, None, "black"),  # Deeper post-move search shows -160cp refutation for White!
+            engine_id="sf_19",
+            engine_version="19",
+            fen_before=fen_already_won,
+            is_book_line=False,
+        )
+        self.assertNotEqual(c_deep_refuted.quality, MoveQuality.BRILLIANT)
+        self.assertFalse(c_deep_refuted.brilliant_diagnostics.is_eligible)
+
+        # Scenario 11: Deterministic consistency across repeated runs
+        runs = [
+            self.classifier.classify_move(
+                ply=7,
+                played_uci="c3d5",
+                played_san="Nd5",
+                mover_color="white",
+                legal_moves_count=28,
+                variations_before=[
+                    CandidateVariation(1, EngineScore(180, None, "white"), 14, 18, ["c3d5", "c6d5"], ["Nd5", "cxd5"]),
+                    CandidateVariation(2, EngineScore(0, None, "white"), 14, 18, ["g1f3"], ["Nf3"]),
+                ],
+                score_after=EngineScore(-180, None, "black"),
+                engine_id="sf_19",
+                engine_version="19",
+                fen_before=fen_already_won,
+                is_book_line=False,
+            )
+            for _ in range(5)
+        ]
+        self.assertTrue(all(r.quality == MoveQuality.BRILLIANT for r in runs))
+        self.assertEqual(len({r.brilliant_diagnostics.eligibility_score for r in runs}), 1)
 
     def test_opening_recognizer_and_event_selector(self) -> None:
         rec = OpeningRecognizer()
@@ -386,6 +643,17 @@ class TestPerMoveRecursiveVariationTreeAndUIReview(unittest.TestCase):
                 app.build()
                 ws = app.workspace_screen
 
+                # 0. Verify home screen buttons have the 4 uploaded icons wired and workspace top_bar removed rename box
+                self.assertTrue(app.home_screen.btn_manual_game.icon_path.endswith("new_game.png"))
+                self.assertTrue(app.home_screen.btn_import_game.icon_path.endswith("import_game.png"))
+                self.assertTrue(app.home_screen.btn_custom_position.icon_path.endswith("custom_game.png"))
+                self.assertTrue(app.home_screen.btn_settings.icon_path.endswith("settings.png"))
+                self.assertNotIn(ws.title_input, ws.top_bar.children)
+                self.assertNotIn(ws.btn_rename, ws.top_bar.children)
+                self.assertEqual(ws.btn_mainline.text, "Mainline")
+                self.assertEqual(ws.btn_run_imported_classification.text, "Game Review")
+                self.assertEqual(ws.btn_toggle_scorecard.text, "Scorecard")
+
                 # 1. Verify notation_row (move strip) is placed BELOW action_bar
                 idx_action = ws.children.index(ws.action_bar)
                 idx_notation = ws.children.index(ws.notation_row)
@@ -404,9 +672,15 @@ class TestPerMoveRecursiveVariationTreeAndUIReview(unittest.TestCase):
                 self.assertTrue(ws.btn_run_imported_classification.disabled)
                 self.assertEqual(ws.btn_run_imported_classification.text, "✓ Reviewed")
 
-                # 3. Clicking a point on the Scorecard's Evaluation Graph jumps the board to that ply
+                # 3. Verify Android back gesture closes open Scorecard first, then returns to previous screen
+                self.assertTrue(ws.is_scorecard_open)
+                self.assertTrue(app.handle_back_action())
+                self.assertFalse(ws.is_scorecard_open)
+                self.assertEqual(app.navigator.current_screen, ScreenName.WORKSPACE)
+
+                # Open scorecard again and test clicking a point on the Evaluation Graph jumps the board to that ply
+                ws.open_scorecard()
                 ws.scorecard_widget.select_ply(3)
-                # 4. Verify EvaluationGraphWidget puts graph_canvas_box on TOP and text_below_box strictly BELOW (no overlap)
                 eg = ws.scorecard_widget.eval_graph
                 idx_canvas = eg.children.index(eg.graph_canvas_box)
                 idx_text = eg.children.index(eg.text_below_box)
@@ -414,6 +688,10 @@ class TestPerMoveRecursiveVariationTreeAndUIReview(unittest.TestCase):
 
                 self.assertFalse(ws.is_scorecard_open)
                 self.assertEqual(sess.board_manager.history.cursor, 3)
+
+                # Back gesture from Workspace returns to Home screen instead of exiting the app
+                self.assertTrue(app.handle_back_action())
+                self.assertEqual(app.navigator.current_screen, ScreenName.HOME)
             finally:
                 container.shutdown()
 

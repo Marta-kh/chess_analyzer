@@ -3,6 +3,8 @@ from .expected_points import ExpectedPointsConfig, ExpectedPointsModel, OutcomeP
 from .evaluator import EvaluationComparison, EvaluationNormalizer, PositionEvaluator
 from .opening_recognizer import OpeningInfo, OpeningRecognizer
 from .move_classifier import (
+    BrilliantEligibilityConfig,
+    BrilliantEligibilityResult,
     ClassificationThresholds,
     MoveClassification,
     MoveClassifier,
@@ -26,6 +28,8 @@ __all__ = [
     "PositionEvaluator",
     "OpeningInfo",
     "OpeningRecognizer",
+    "BrilliantEligibilityConfig",
+    "BrilliantEligibilityResult",
     "ClassificationThresholds",
     "MoveClassification",
     "MoveClassifier",

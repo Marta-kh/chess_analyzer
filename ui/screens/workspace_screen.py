@@ -1,11 +1,11 @@
 """
 'Analyze This'-style Vertical Mobile Analysis Workspace (Section 5.5).
 Clean, zero-overlap vertical layout:
-1. Top Header Bar (`< Home`, Mode/Title, Rename input + Edit icon, `Flip`)
-2. Scrollable Multi-Line Move Review / Coach Box (`KivyScrollLabel`, vertical mouse scroll, `bar_width=0`)
+1. Top Header Bar (`< Home`, Mode/Title, `Flip`) — rename input removed from game screen per user request
+2. Scrollable Multi-Line Move Review / Coach Box (`KivyScrollLabel`, vertical scroll, `bar_width=0`)
 3. Center Slot (`InteractiveChessBoardWidget` OR `GameReviewScorecardWidget` overlay card with interactive Evaluation Graph)
-4. Clean 4-Button Action Bar (`[↩ Mainline]`, `[Variants (0)]`, `[🔍 Game Review]`, `[📊 Scorecard]`)
-5. Full-Width Horizontally Mouse-Scrollable Move Strip BELOW the action buttons (`Main: 1. e4 - Best • 1... e5 - Good ...`, `bar_width=0`)
+4. Clean 4-Button Action Bar (`[Mainline]`, `[Variants (0)]`, `[Game Review]`, `[Scorecard]`) without placeholder icon boxes
+5. Full-Width Horizontally Scrollable Move Strip BELOW the action buttons (`Main: 1. e4 - Best • 1... e5 - Good ...`, chunked for mobile GPUs)
 6. Scrollable Multi-Engine & MultiPV Candidate Variation Drawer (`bar_width=0`)
 7. Bottom Media Transport Bar (`|<<`, `<`, `>`, `>>|`, `Undo`, `Redo`, `End PV`)
 """
@@ -44,27 +44,29 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self._engine_refresh_scheduled: bool = False
         self.is_scorecard_open: bool = False
 
-        # 1. Top Header Bar
+        # 1. Top Header Bar (Clean 3-item header: < Home | Game Title & Mode | Flip)
         self.top_bar = KivyBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
             height=38,
-            spacing=3,
+            spacing=4,
             bg_color=(0.12, 0.16, 0.21, 1.0),
         )
         self.btn_home = KivyButton(
             text="< Home",
-            size_hint_x=0.18,
+            size_hint_x=0.22,
             font_size="11sp",
             on_release=lambda _b: self.navigator.navigate_to(ScreenName.HOME),
         )
         self.mode_indicator = KivyLabel(
             text="Analyze This",
             bold=True,
-            size_hint_x=0.36,
-            font_size="10.5sp",
+            size_hint_x=0.58,
+            font_size="11sp",
             wrap=True,
         )
+        # Keep `title_input` and `btn_rename` as attributes for programmatic/API compatibility,
+        # but do not mount them in `top_bar` since games are renamed from the Home screen history.
         self.title_input = KivyTextInput(
             text="",
             hint_text="Rename game...",
@@ -81,17 +83,15 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self.btn_flip = KivyButton(
             text="Flip",
             id="btn_flip",
-            size_hint_x=0.13,
+            size_hint_x=0.20,
             font_size="11sp",
             on_release=lambda _b: self.flip_board(),
         )
         self.top_bar.add_widget(self.btn_home)
         self.top_bar.add_widget(self.mode_indicator)
-        self.top_bar.add_widget(self.title_input)
-        self.top_bar.add_widget(self.btn_rename)
         self.top_bar.add_widget(self.btn_flip)
 
-        # 2. Mouse-Scrollable Multi-Line Move Review / Coach Box ABOVE the Board
+        # 2. Scrollable Multi-Line Move Review / Coach Box ABOVE the Board
         self.coach_box = KivyBoxLayout(
             orientation="vertical",
             size_hint_y=None,
@@ -126,7 +126,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
         )
         self.center_slot.add_widget(self.board_widget)
 
-        # 4. Clean 4-Button Action Bar: [↩ Mainline] [Variants (0)] [🔍 Game Review] [📊 Scorecard]
+        # 4. Clean 4-Button Action Bar without placeholder icon boxes: [Mainline] [Variants (0)] [Game Review] [Scorecard]
         self.action_bar = KivyBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
@@ -134,7 +134,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             spacing=4,
         )
         self.btn_mainline = KivyButton(
-            text="↩ Mainline",
+            text="Mainline",
             id="btn_mainline",
             size_hint_x=0.24,
             font_size="11sp",
@@ -152,7 +152,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             on_release=lambda _b: self.cycle_variants(),
         )
         self.btn_run_imported_classification = KivyButton(
-            text="🔍 Game Review",
+            text="Game Review",
             id="btn_run_classification",
             size_hint_x=0.28,
             font_size="11sp",
@@ -162,7 +162,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self.btn_finish_and_analyze = self.btn_run_imported_classification
 
         self.btn_toggle_scorecard = KivyButton(
-            text="📊 Scorecard",
+            text="Scorecard",
             id="btn_toggle_scorecard",
             size_hint_x=0.24,
             font_size="11sp",
@@ -177,7 +177,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self.action_bar.add_widget(self.btn_run_imported_classification)
         self.action_bar.add_widget(self.btn_toggle_scorecard)
 
-        # 5. Full-Width Horizontally Mouse-Scrollable Move Strip Placed BELOW the Action Buttons!
+        # 5. Full-Width Horizontally Scrollable Move Strip Placed BELOW the Action Buttons!
         self.notation_row = KivyBoxLayout(
             orientation="horizontal",
             size_hint_y=None,
@@ -192,7 +192,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
         )
         self.notation_row.add_widget(self.move_list_label)
 
-        # 6. Multi-Engine & MultiPV Candidate Variation Panel (Scrollable with mouse wheel/drag, bar_width=0)
+        # 6. Multi-Engine & MultiPV Candidate Variation Panel
         self.engine_scroll = KivyScrollView(do_scroll_x=False, do_scroll_y=True)
         self.engine_panel = EngineComparisonPanel(
             engine_manager=self.container.engine_manager,
@@ -484,7 +484,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             return None
         return self._execute_game_review(s, search_depth=search_depth)
 
-    def run_classification_now(self, search_depth: int = 2) -> Optional[GameAnalysisReport]:
+    def run_classification_now(self, search_depth: int = 6) -> Optional[GameAnalysisReport]:
         s = self.container.active_session
         if not s or self._is_review_running:
             return None
@@ -499,7 +499,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
         self.container.session_repo.save_session(s)
         return self._execute_game_review(s, search_depth=search_depth)
 
-    def _execute_game_review(self, s, search_depth: int = 2) -> Optional[GameAnalysisReport]:
+    def _execute_game_review(self, s, search_depth: int = 6) -> Optional[GameAnalysisReport]:
         if USING_NATIVE_KIVY:
             if self._is_review_running:
                 return None
@@ -508,6 +508,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             self.current_move_eval_label.text = "Running Game Review in background (0%)... The board remains interactive."
             engines = self.container.engine_registry.list_enabled_engines() or self.container.engine_registry.list_engines()
             primary_engine = engines[0]
+            effective_depth = max(6, search_depth)
 
             def _on_prog(prog: GameAnalysisProgress) -> None:
                 pct = int(prog.ratio * 100)
@@ -535,7 +536,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             self.container.analysis_service.game_analyzer.start_background_analysis(
                 session=s,
                 engine_def=primary_engine,
-                search_depth=search_depth,
+                search_depth=effective_depth,
                 on_progress=_on_prog,
                 on_complete=_on_done,
                 force_reanalyze=True,
@@ -587,23 +588,23 @@ class AnalysisWorkspaceScreen(KivyScreen):
         already_reviewed = self.container.analysis_service.has_valid_review(s)
         if self._is_review_running:
             self.btn_run_imported_classification.disabled = True
-            self.btn_run_imported_classification.text = "⏳ Reviewing..."
+            self.btn_run_imported_classification.text = "Reviewing..."
         elif already_reviewed:
             self.btn_run_imported_classification.disabled = True
-            self.btn_run_imported_classification.text = "✓ Reviewed"
+            self.btn_run_imported_classification.text = "Reviewed" if USING_NATIVE_KIVY else "✓ Reviewed"
         else:
             self.btn_run_imported_classification.disabled = False
-            self.btn_run_imported_classification.text = "🔍 Game Review"
+            self.btn_run_imported_classification.text = "Game Review"
 
         self.btn_toggle_scorecard.disabled = report is None
-        self.btn_toggle_scorecard.text = "× Hide Card" if self.is_scorecard_open else "📊 Scorecard"
+        self.btn_toggle_scorecard.text = "Hide Card" if self.is_scorecard_open else "Scorecard"
 
         cls_by_ply = {c.ply: c for c in report.classifications} if (report and not h.is_in_variant) else {}
 
         parts = []
         active_path = h._get_active_tree_path()
         for idx, node in enumerate(h.nodes):
-            cursor_mark = "▶" if node.ply == h.cursor else ""
+            cursor_mark = ">" if node.ply == h.cursor else ""
             mv_prefix = f"{node.fullmove_number}." if node.turn_before == "white" else f"{node.fullmove_number}..."
             var_suffix = ""
             if idx < len(active_path):
@@ -623,7 +624,7 @@ class AnalysisWorkspaceScreen(KivyScreen):
             curr_node = h.current_node
             if s.is_classification_stale:
                 self.current_move_eval_label.text = (
-                    "Move history was edited after analysis — classifications invalidated. Tap '🔍 Game Review' to re-analyze."
+                    "Move history was edited after analysis — classifications invalidated. Tap 'Game Review' to re-analyze."
                 )
                 self.classification_status_label.text = "invalidated"
             elif curr_node and curr_node.ply in cls_by_ply:
@@ -648,12 +649,9 @@ class AnalysisWorkspaceScreen(KivyScreen):
             elif h.is_in_variant:
                 self.current_move_eval_label.text = (
                     "Exploring variation branch — Use the Variants button to switch variations at this move, "
-                    "or tap '↩ Mainline' to return to the original game."
+                    "or tap 'Mainline' to return to the original game."
                 )
             else:
                 self.current_move_eval_label.text = (
-                    "Coach: Tap '🔍 Game Review' below to classify every move (Best, Great, Blunder, etc.) and open the Scorecard."
+                    "Coach: Tap 'Game Review' below to classify every move (Best, Great, Blunder, etc.) and open the Scorecard."
                 )
-
-        self.board_widget.refresh_board()
-        self.engine_panel.refresh()

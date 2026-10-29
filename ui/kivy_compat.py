@@ -1,7 +1,7 @@
 """
 Kivy framework adapter with 'Analyze This' visual styling, density-independent pixel (`dp`) scaling
-for iOS Retina & Android screens, safe-area mobile insets, OpenGL stencil-clipped scrollable text,
-and auto-sizing vertical BoxLayouts so text never overflows or overlaps buttons.
+for iOS Retina & Android screens, safe-area mobile insets, chunked OpenGL stencil-clipped scrollable text
+(preventing >4096px GPU texture blackouts on long move lists), icon-enabled buttons, and Android back-gesture support.
 """
 import os
 import sys
@@ -30,12 +30,55 @@ _IN_TEST_RUNNER = (
     or any("unittest" in arg or "pytest" in arg for arg in sys.argv)
 )
 
+# Glyphs missing from Kivy's default Roboto font on iOS/Android that otherwise render as [X] tofu boxes
+_MOBILE_UNSUPPORTED_GLYPHS = (
+    ("🔍 ", ""),
+    ("🔍", ""),
+    ("📊 ", ""),
+    ("📊", ""),
+    ("↩ ", ""),
+    ("↩", ""),
+    ("⏳ ", ""),
+    ("⏳", ""),
+    ("⚙  ", ""),
+    ("⚙ ", ""),
+    ("⚙", ""),
+    ("♟  ", ""),
+    ("♟ ", ""),
+    ("♟", ""),
+    ("☁  ", ""),
+    ("☁ ", ""),
+    ("☁", ""),
+    ("✎  ", ""),
+    ("✎ ", ""),
+    ("✎", ""),
+    ("✓ ", ""),
+    ("✓", ""),
+    ("▶ ", "> "),
+    ("▶", ">"),
+    ("★", "*"),
+    ("→", "->"),
+)
+
+
+def _clean_mobile_display_text(text: str) -> str:
+    if not text:
+        return text
+    out = text
+    for bad, rep in _MOBILE_UNSUPPORTED_GLYPHS:
+        if bad in out:
+            out = out.replace(bad, rep)
+    return out
+
+
 try:
     if _IN_TEST_RUNNER:
         raise ImportError("Running inside automated test runner; using deterministic headless widget tree.")
 
+    from kivy.config import Config  # type: ignore
+    # Prevent Android back-swipe / Escape key from exiting the app instead of navigating back
+    Config.set("kivy", "exit_on_escape", "0")
     if not _IS_MOBILE:
-        from kivy.config import Config  # type: ignore
         Config.set("graphics", "width", "430")
         Config.set("graphics", "height", "860")
 
@@ -67,6 +110,7 @@ try:
         pass
 
     USING_NATIVE_KIVY = True
+    KivyWindow = _NativeWindow
 
     def KivyDP(val: float) -> float:
         return float(_native_dp(val))
@@ -138,7 +182,7 @@ try:
 
     class KivyScrollView(_NativeScrollView):
         """
-        Mouse-draggable and mouse-wheel-scrollable ScrollView with hidden scrollbars (`bar_width=0`).
+        Mouse-draggable and touch-scrollable ScrollView with hidden scrollbars (`bar_width=0`).
         Supports both vertical and horizontal scrolling cleanly with OpenGL stencil clipping.
         """
 
@@ -165,11 +209,7 @@ try:
 
     class KivyLabel(_NativeLabel):
         """
-        Zero-feedback-loop Kivy Label:
-        - `scrollable_x=True`: keeps `text_size=(None, None)` so Kivy computes `texture_size` in a single pass,
-          and updates `width` only when `abs(width - target_w) > dp(2.0)`.
-        - `wrap=True`: binds ONLY `width` (not `size` or `height`) with a tolerance guard so updating
-          `height` from `texture_size` never re-triggers `text_size`.
+        Zero-feedback-loop Kivy Label with automatic sanitization of unsupported mobile glyphs.
         """
 
         def __init__(self, text: str = "", **kwargs: Any) -> None:
@@ -183,34 +223,44 @@ try:
                 clean["size_hint_x"] = None
             elif wrap:
                 clean.setdefault("halign", "left")
-                clean.setdefault("valign", "top")
+                clean.setdefault("valign", "middle")
 
-            super().__init__(text=text, **clean)
+            super().__init__(text=_clean_mobile_display_text(text), **clean)
             self.id = wid
             _apply_bg_color(self, bg_color)
 
             if scrollable_x:
                 def _on_tex_w(inst: Any, ts: Any) -> None:
-                    pw = inst.parent.width if inst.parent else _native_dp(200.0)
-                    target_w = max(float(pw), float(ts[0]) + _native_dp(20.0))
+                    pw = inst.parent.width if inst.parent else _native_dp(120.0)
+                    target_w = max(float(pw), float(ts[0]) + _native_dp(16.0))
                     if abs(float(inst.width) - target_w) > _native_dp(2.0):
                         inst.width = target_w
 
                 self.bind(texture_size=_on_tex_w)
             elif wrap:
                 def _on_wrap_w(inst: Any, w: float) -> None:
-                    target_tw = max(_native_dp(40.0), float(w) - _native_dp(12.0))
+                    target_tw = max(_native_dp(40.0), float(w) - _native_dp(10.0))
                     curr_tw = float(inst.text_size[0]) if (inst.text_size and inst.text_size[0]) else 0.0
                     if abs(curr_tw - target_tw) > _native_dp(2.0):
                         inst.text_size = (target_tw, None)
 
                 self.bind(width=_on_wrap_w)
 
+        def on_text(self, instance: Any, value: str) -> None:
+            cleaned = _clean_mobile_display_text(value)
+            if cleaned != value:
+                self.text = cleaned
+
     class KivyScrollLabel(KivyScrollView):
         """
-        Hardware stencil-clipped, mouse-scrollable label container (`bar_width=0`).
-        Completely free of Clock feedback loops.
+        Hardware stencil-clipped, touch/mouse-scrollable label container (`bar_width=0`).
+        For `direction="horizontal"`, automatically chunks long strings (such as 60+ move game strips)
+        into compact `_NativeLabel` segments inside a horizontal BoxLayout so no single label texture
+        ever exceeds iOS/Android's 4096px `GL_MAX_TEXTURE_SIZE` limit (which previously caused long
+        imported game move strips to render as a blank black bar on iPhone).
         """
+
+        _CHUNK_MAX_CHARS = 75
 
         def __init__(
             self,
@@ -221,18 +271,25 @@ try:
             color: Tuple[float, float, float, float] = (0.93, 0.95, 0.97, 1.0),
             **kwargs: Any,
         ) -> None:
-            is_horiz = (direction == "horizontal")
-            kwargs.setdefault("do_scroll_x", is_horiz)
-            kwargs.setdefault("do_scroll_y", not is_horiz)
+            self._is_horiz = (direction == "horizontal")
+            self._font_size = font_size
+            self._bold = bold
+            self._color = color
+            self._raw_text = text
+            kwargs.setdefault("do_scroll_x", self._is_horiz)
+            kwargs.setdefault("do_scroll_y", not self._is_horiz)
             super().__init__(**kwargs)
-            if is_horiz:
-                self._inner_label = KivyLabel(
-                    text=text,
-                    scrollable_x=True,
-                    font_size=font_size,
-                    bold=bold,
-                    color=color,
+
+            if self._is_horiz:
+                self._horiz_box = _NativeBoxLayout(
+                    orientation="horizontal",
+                    size_hint=(None, 1.0),
+                    spacing=_native_dp(8),
+                    padding=(_native_dp(4), 0, _native_dp(8), 0),
                 )
+                self._horiz_box.bind(minimum_width=self._horiz_box.setter("width"))
+                self.add_widget(self._horiz_box)
+                self._rebuild_horizontal_chunks(text)
             else:
                 self._inner_label = KivyLabel(
                     text=text,
@@ -242,38 +299,154 @@ try:
                     bold=bold,
                     color=color,
                 )
+
                 def _on_v_tex(inst: Any, ts: Any) -> None:
                     target_h = max(float(self.height), float(ts[1]) + _native_dp(8.0))
                     if abs(float(inst.height) - target_h) > _native_dp(2.0):
                         inst.height = target_h
 
                 self._inner_label.bind(texture_size=_on_v_tex)
-            self.add_widget(self._inner_label)
+                self.add_widget(self._inner_label)
+
+        def _rebuild_horizontal_chunks(self, raw_value: str) -> None:
+            cleaned = _clean_mobile_display_text(raw_value)
+            self._horiz_box.clear_widgets()
+            if not cleaned:
+                cleaned = " "
+
+            # Split into safe chunks <= _CHUNK_MAX_CHARS so each Label texture is < 1024px wide
+            tokens = cleaned.split("   ") if "   " in cleaned else cleaned.split(" ")
+            sep = "   " if "   " in cleaned else " "
+            chunks: List[str] = []
+            curr_parts: List[str] = []
+            curr_len = 0
+            active_chunk_idx = 0
+
+            for tok in tokens:
+                if not tok:
+                    continue
+                if curr_len + len(tok) + len(sep) > self._CHUNK_MAX_CHARS and curr_parts:
+                    chunk_str = sep.join(curr_parts)
+                    if ">" in chunk_str:
+                        active_chunk_idx = len(chunks)
+                    chunks.append(chunk_str)
+                    curr_parts = [tok]
+                    curr_len = len(tok)
+                else:
+                    curr_parts.append(tok)
+                    curr_len += len(tok) + len(sep)
+            if curr_parts:
+                chunk_str = sep.join(curr_parts)
+                if ">" in chunk_str:
+                    active_chunk_idx = len(chunks)
+                chunks.append(chunk_str)
+
+            if not chunks:
+                chunks = [cleaned]
+
+            for ch_str in chunks:
+                lbl = _NativeLabel(
+                    text=ch_str,
+                    font_size=self._font_size,
+                    bold=self._bold,
+                    color=self._color,
+                    size_hint=(None, 1.0),
+                    halign="left",
+                    valign="middle",
+                )
+
+                def _upd_lbl_w(inst: Any, ts: Any) -> None:
+                    tw = max(_native_dp(12.0), float(ts[0]) + _native_dp(4.0))
+                    if abs(float(inst.width) - tw) > _native_dp(1.5):
+                        inst.width = tw
+
+                lbl.bind(texture_size=_upd_lbl_w)
+                lbl.texture_update()
+                lbl.width = max(_native_dp(12.0), float(lbl.texture_size[0]) + _native_dp(4.0))
+                self._horiz_box.add_widget(lbl)
+
+            # Auto-scroll horizontally to keep the active move (`>`) visible when stepping through a long game
+            if len(chunks) > 1 and ">" in cleaned:
+                ratio = active_chunk_idx / float(max(1, len(chunks) - 1))
+                self.scroll_x = max(0.0, min(1.0, ratio))
 
         @property
         def text(self) -> str:
-            return self._inner_label.text
+            return self._raw_text if self._is_horiz else self._inner_label.text
 
         @text.setter
         def text(self, value: str) -> None:
-            if self._inner_label.text == value:
-                return
-            self._inner_label.text = value
+            if self._is_horiz:
+                if self._raw_text == value:
+                    return
+                self._raw_text = value
+                self._rebuild_horizontal_chunks(value)
+            else:
+                if self._inner_label.text == value:
+                    return
+                self._inner_label.text = value
 
     class KivyButton(_NativeButton):
-        def __init__(self, text: str = "", on_release: Optional[Callable[..., None]] = None, **kwargs: Any) -> None:
+        def __init__(
+            self,
+            text: str = "",
+            on_release: Optional[Callable[..., None]] = None,
+            icon_path: Optional[str] = None,
+            wrap_text: bool = False,
+            **kwargs: Any,
+        ) -> None:
             wid, kw_rel, bg_color, clean = _clean_kwargs(kwargs)
             clean.setdefault("background_normal", "")
             clean.setdefault("background_color", bg_color or (0.18, 0.24, 0.32, 1.0))
             clean.setdefault("color", (0.96, 0.97, 0.99, 1.0))
             clean.setdefault("font_size", "11.5sp")
             clean.setdefault("bold", True)
-            super().__init__(text=text, **clean)
+            if wrap_text:
+                clean.setdefault("halign", "center")
+                clean.setdefault("valign", "middle")
+            super().__init__(text=_clean_mobile_display_text(text), **clean)
             self.id = wid
+            self.icon_path = icon_path
+            self._icon_img: Optional[_NativeImage] = None
             self._release_callbacks: List[Callable[..., None]] = []
+
+            if icon_path and Path(icon_path).exists():
+                self._icon_img = _NativeImage(
+                    source=icon_path,
+                    allow_stretch=True,
+                    keep_ratio=True,
+                )
+                self.add_widget(self._icon_img)
+
+                def _upd_icon(inst: Any, _val: Any) -> None:
+                    if inst._icon_img is not None:
+                        ico_sz = min(inst.height * 0.56, _native_dp(22))
+                        inst._icon_img.size = (ico_sz, ico_sz)
+                        inst._icon_img.pos = (
+                            inst.x + _native_dp(12),
+                            inst.y + (inst.height - ico_sz) * 0.5,
+                        )
+
+                self.bind(pos=_upd_icon, size=_upd_icon)
+                _upd_icon(self, None)
+
+            if wrap_text:
+                def _upd_btn_wrap(inst: Any, w: float) -> None:
+                    target_tw = max(_native_dp(40.0), float(w) - _native_dp(12.0))
+                    curr_tw = float(inst.text_size[0]) if (inst.text_size and inst.text_size[0]) else 0.0
+                    if abs(curr_tw - target_tw) > _native_dp(2.0):
+                        inst.text_size = (target_tw, None)
+
+                self.bind(width=_upd_btn_wrap)
+
             cb = on_release or kw_rel
             if cb is not None:
                 self.bind(on_release=cb)
+
+        def on_text(self, instance: Any, value: str) -> None:
+            cleaned = _clean_mobile_display_text(value)
+            if cleaned != value:
+                self.text = cleaned
 
         def bind(self, **kwargs: Callable[..., None]) -> None:
             if "on_release" in kwargs:
@@ -320,7 +493,7 @@ try:
                 self._img = _NativeImage(source=icon_path, allow_stretch=True, keep_ratio=True)
                 self.add_widget(self._img)
             else:
-                self._lbl = _NativeLabel(text=text, bold=True, font_size="11sp")
+                self._lbl = _NativeLabel(text=_clean_mobile_display_text(text), bold=True, font_size="11sp")
                 self.add_widget(self._lbl)
 
             def _upd(inst: Any, _val: Any) -> None:
@@ -494,6 +667,7 @@ try:
 
 except ImportError:
     USING_NATIVE_KIVY = False
+    KivyWindow = None
 
     def KivyDP(val: float) -> float:
         return float(val)
@@ -550,7 +724,10 @@ except ImportError:
             super().__init__(cols=cols, rows=rows, **kwargs)
 
     class KivyScrollView(KivyWidget):
-        pass
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.scroll_x: float = 0.0
+            self.scroll_y: float = 1.0
 
     class KivyLabel(KivyWidget):
         def __init__(self, text: str = "", **kwargs: Any) -> None:
@@ -562,8 +739,17 @@ except ImportError:
             self.direction = direction
 
     class KivyButton(KivyLabel):
-        def __init__(self, text: str = "", on_release: Optional[Callable[..., None]] = None, **kwargs: Any) -> None:
+        def __init__(
+            self,
+            text: str = "",
+            on_release: Optional[Callable[..., None]] = None,
+            icon_path: Optional[str] = None,
+            wrap_text: bool = False,
+            **kwargs: Any,
+        ) -> None:
             super().__init__(text=text, **kwargs)
+            self.icon_path = icon_path
+            self.wrap_text = wrap_text
             if on_release is not None:
                 self.bind(on_release=on_release)
 
@@ -580,7 +766,7 @@ except ImportError:
             **kwargs: Any,
         ) -> None:
             label_txt = text or (Path(icon_path).stem if icon_path else "")
-            super().__init__(text=label_txt, on_release=on_release, **kwargs)
+            super().__init__(text=label_txt, on_release=on_release, icon_path=icon_path, **kwargs)
             self.icon_path = icon_path
             self.is_selected = is_selected
 

@@ -13,16 +13,18 @@ _IS_MOBILE = (
     or (sys.platform == "ios")
 )
 
-if not _IS_MOBILE:
-    try:
-        from kivy.config import Config  # type: ignore
+try:
+    from kivy.config import Config  # type: ignore
+    # Prevent Android back-swipe gesture from exiting the app instead of navigating back
+    Config.set("kivy", "exit_on_escape", "0")
+    if not _IS_MOBILE:
         Config.set("graphics", "width", "430")
         Config.set("graphics", "height", "860")
         Config.set("graphics", "minimum_width", "360")
         Config.set("graphics", "minimum_height", "640")
         Config.set("graphics", "resizable", "1")
-    except Exception:
-        pass
+except Exception:
+    pass
 
 # Ensure `chess_analyzer` package imports work whether launched from `chess_analyzer/main.py` on desktop
 # OR flattened into `/data/user/0/.../files/app/main.py` inside a Buildozer Android APK or kivy-ios bundle!
@@ -45,8 +47,6 @@ if "chess_analyzer" not in sys.modules:
     _pkg.__package__ = "chess_analyzer"
     sys.modules["chess_analyzer"] = _pkg
 
-# Guard against broken native/mypyc `chardet` wheels (e.g. chardet>=7.0 manylinux .so on Android)
-# so `import requests` never crashes on startup.
 try:
     import chardet  # type: ignore  # noqa: F401
 except Exception:

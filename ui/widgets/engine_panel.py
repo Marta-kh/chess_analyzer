@@ -45,7 +45,7 @@ class EngineInstancePanel(KivyBoxLayout):
 
         self.top_row = KivyBoxLayout(orientation="horizontal", size_hint_y=None, height=28, spacing=4)
         self.header_label = KivyLabel(
-            text=f"⚙ {engine_def.display_name}",
+            text=engine_def.display_name,
             bold=True,
             halign="left",
             size_hint_x=0.52,
@@ -87,7 +87,7 @@ class EngineInstancePanel(KivyBoxLayout):
             self.status_label.text = "Engine idle — tap 'Engine: OFF' to start analysis."
             return
 
-        depth_str = f"d{self.result.current_depth}/{self.result.target_depth or '∞'}"
+        depth_str = f"d{self.result.current_depth}/{self.result.target_depth or 'inf'}"
         pct = int(self.result.progress_ratio * 100)
         calc_extra = " • Calculating..." if self.result.is_calculating_additional_variation else ""
         self.status_label.text = (
@@ -130,7 +130,7 @@ class EngineInstancePanel(KivyBoxLayout):
             on_release=lambda _b, pv=list(var.pv_uci): self._on_inspect(pv),
         )
         remove_btn = KivyButton(
-            text="×",
+            text="x",
             id=f"remove_var_{self.engine_def.engine_id}_{var.multipv_index}",
             size_hint_x=0.12,
             disabled=(self.engine_def.config.visible_variations <= 1),

@@ -122,6 +122,17 @@ jobs:
             --exclude '*.pyc'
           toolchain create chessanalyzer "$SOURCE_DIR"
           cd chessanalyzer-ios
+          # Replace default Kivy iOS icons with assets/icons/app_icon.png
+          if [ -f "$SOURCE_DIR/assets/icons/app_icon.png" ]; then
+            for icon_file in $(find . -path "*/AppIcon.appiconset/*.png" -o -name "icon*.png"); do
+              [ -f "$icon_file" ] || continue
+              w=$(sips -g pixelWidth "$icon_file" 2>/dev/null | awk '/pixelWidth/{print $2}')
+              h=$(sips -g pixelHeight "$icon_file" 2>/dev/null | awk '/pixelHeight/{print $2}')
+              if [ -n "$w" ] && [ -n "$h" ]; then
+                sips -s format png -z "$h" "$w" "$SOURCE_DIR/assets/icons/app_icon.png" --out "$icon_file" >/dev/null || true
+              fi
+            done
+          fi
           # Retry once: kivy-ios' generated rsync phase can intermittently return
           # code 24 when generated files disappear during the first copy.
           xcodebuild -project chessanalyzer.xcodeproj -scheme chessanalyzer -configuration Release -sdk iphoneos IPHONEOS_DEPLOYMENT_TARGET=13.0 CODE_SIGNING_ALLOWED=NO CODE_SIGN_IDENTITY="" PROVISIONING_PROFILE="" -derivedDataPath build clean build || \

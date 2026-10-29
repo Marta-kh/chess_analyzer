@@ -1,8 +1,9 @@
 """Selective Game Review event identification (Chess.com-inspired key moments).
 
-Identifies high-signal events (Brilliant, Great, Blunder, Mistake, Inaccuracy, Miss,
+Identifies high-signal events (Brilliant, Great, Blunder, Mistake, Miss,
 critical defensive saves, turning points, and end of opening book) while suppressing
-routine Best/Excellent/Good moves so the summary stays focused and readable.
+routine Best/Excellent/Good moves and deduplicating consecutive redundant highlights
+from the same tactical sequence so the review timeline stays concise and readable.
 """
 from dataclasses import dataclass
 from typing import List
@@ -26,7 +27,7 @@ class KeyGameEvent:
 
 
 class GameEventSelector:
-    """Filters and ranks important game moments without re-running Stockfish."""
+    """Filters, deduplicates, and ranks important game moments without re-running Stockfish."""
 
     ROUTINE_QUALITIES = {
         MoveQuality.BEST,
@@ -40,9 +41,9 @@ class GameEventSelector:
         self,
         classifications: List[MoveClassification],
         player_filter: str = "both",  # "both", "white", "black"
-        density: str = "standard",    # "compact" (max 8), "standard" (max 16), "detailed" (all key events)
+        density: str = "standard",    # "compact" (max 8), "standard" (max 14), "detailed" (all key events)
     ) -> List[KeyGameEvent]:
-        events: List[KeyGameEvent] = []
+        raw_events: List[KeyGameEvent] = []
         last_book_ply = 0
         for c in classifications:
             if c.quality == MoveQuality.BOOK:
@@ -61,7 +62,7 @@ class GameEventSelector:
 
             # End-of-book transition marker
             if last_book_ply > 0 and c.ply == last_book_ply + 1 and c.quality in self.ROUTINE_QUALITIES:
-                events.append(
+                raw_events.append(
                     KeyGameEvent(
                         ply=c.ply,
                         move_number=move_num,
@@ -81,30 +82,34 @@ class GameEventSelector:
             if c.quality in self.ROUTINE_QUALITIES or c.quality == MoveQuality.BOOK:
                 continue
 
+            # Skip minor inaccuracies (< 0.065 EP loss) in compact/standard modes unless no major events exist
+            if c.quality == MoveQuality.INACCURACY and ep_loss < 0.065 and density in ("compact", "standard"):
+                continue
+
             base_importance = {
                 MoveQuality.BRILLIANT: 1.00,
-                MoveQuality.GREAT: 0.85,
                 MoveQuality.BLUNDER: 0.95,
                 MoveQuality.MISSED_WIN: 0.88,
+                MoveQuality.GREAT: 0.85,
                 MoveQuality.MISTAKE: 0.72,
                 MoveQuality.INACCURACY: 0.45,
             }.get(c.quality, 0.50)
 
             importance = min(1.0, base_importance + 0.35 * ep_loss)
             if c.quality == MoveQuality.BRILLIANT:
-                ev_type = "Brilliant Sacrifice / Resource"
+                ev_type = "Brilliant Sacrifice"
             elif c.quality == MoveQuality.GREAT:
                 ev_type = "Critical Move / Defensive Save"
             elif c.quality == MoveQuality.BLUNDER:
                 ev_type = "Turning Point (Blunder)" if ep_loss >= 0.30 else "Blunder"
             elif c.quality == MoveQuality.MISSED_WIN:
-                ev_type = "Missed Tactical Opportunity"
+                ev_type = "Missed Winning Opportunity"
             elif c.quality == MoveQuality.MISTAKE:
                 ev_type = "Mistake"
             else:
                 ev_type = "Inaccuracy"
 
-            events.append(
+            raw_events.append(
                 KeyGameEvent(
                     ply=c.ply,
                     move_number=move_num,
@@ -120,10 +125,25 @@ class GameEventSelector:
                 )
             )
 
+        # Deduplicate overlapping minor/same-category highlights within the same immediate tactical sequence
+        deduped: List[KeyGameEvent] = []
+        for ev in raw_events:
+            if (
+                deduped
+                and ev.quality in (MoveQuality.INACCURACY, MoveQuality.MISTAKE)
+                and deduped[-1].quality == ev.quality
+                and deduped[-1].mover_color == ev.mover_color
+                and (ev.ply - deduped[-1].ply) <= 2
+            ):
+                if ev.importance_score > deduped[-1].importance_score:
+                    deduped[-1] = ev
+                continue
+            deduped.append(ev)
+
         if density == "compact":
-            ranked = sorted(events, key=lambda e: (-e.importance_score, e.ply))[:8]
+            ranked = sorted(deduped, key=lambda e: (-e.importance_score, e.ply))[:8]
             return sorted(ranked, key=lambda e: e.ply)
         elif density == "standard":
-            ranked = sorted(events, key=lambda e: (-e.importance_score, e.ply))[:16]
+            ranked = sorted(deduped, key=lambda e: (-e.importance_score, e.ply))[:14]
             return sorted(ranked, key=lambda e: e.ply)
-        return events
+        return deduped
